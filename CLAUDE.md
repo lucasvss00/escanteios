@@ -1,5 +1,10 @@
 # Projeto: Modelo Preditivo de Escanteios — BetsAPI
 
+## Repositório GitHub
+- **URL**: https://github.com/lucasvss00/escanteios
+- **Branch principal**: `main`
+- **Auto-push**: cada arquivo editado/criado pelo Claude Code dispara automaticamente `git add -A && git commit && git push origin main` via hook `PostToolUse` configurado em `.claude/settings.json`
+
 ## Descrição
 Coleta, processamento e modelagem de dados de escanteios de futebol via BetsAPI (b365api.com).
 O objetivo é treinar um modelo de ML capaz de prever o total de escanteios de uma partida
