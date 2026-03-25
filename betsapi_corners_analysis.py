@@ -45,11 +45,107 @@ cols_interesse = [
     "shots_on_target_home_total", "shots_on_target_away_total",
     "total_goals",
 ]
-print(df_pano[cols_interesse].describe().round(2).to_string())
+cols_interesse = [c for c in cols_interesse if c in df_pano.columns]
+if cols_interesse:
+    print(df_pano[cols_interesse].describe().round(2).to_string())
 
 # %%
 print("\n--- Distribuição de escanteios por jogo ---")
-print(df_pano["corners_total"].value_counts().sort_index().head(20))
+if "corners_total" in df_pano.columns:
+    print(df_pano["corners_total"].value_counts().sort_index().head(20))
+
+# %%
+# =============================================================================
+# 2.5 HISTÓRICO DOS TIMES (rolling averages dos últimos N jogos)
+#
+# Para cada jogo no panorama, calcula médias históricas dos times
+# com base nos jogos ANTERIORES (sem data leaking).
+# =============================================================================
+
+ROLLING_WINDOW = 10  # últimos N jogos
+
+def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> pd.DataFrame:
+    """
+    Para cada jogo no panorama, calcula features históricas de cada time
+    (home e away) com base nos últimos `window` jogos finalizados anteriores.
+
+    Retorna DataFrame com event_id + features históricas.
+    """
+    df = df_pano.copy()
+    if "kickoff_dt" not in df.columns:
+        return pd.DataFrame({"event_id": df["event_id"]})
+
+    df["kickoff_dt_parsed"] = pd.to_datetime(df["kickoff_dt"], errors="coerce")
+    df = df.sort_values("kickoff_dt_parsed").reset_index(drop=True)
+
+    # Colunas de stats que queremos agregar por time
+    stat_cols = {
+        "corners_total":                "corners",
+        "corners_home_total":           "corners_scored",
+        "corners_away_total":           "corners_conceded",
+        "dangerous_attacks_home_total": "dangerous_attacks",
+        "attacks_home_total":           "attacks",
+        "shots_on_target_home_total":   "shots_on_target",
+        "total_goals":                  "goals",
+    }
+    # Filtra apenas colunas que existem
+    stat_cols = {k: v for k, v in stat_cols.items() if k in df.columns}
+
+    # Acumula histórico por time (home_id e away_id)
+    team_history: dict[str, list[dict]] = {}
+    result_rows = []
+
+    for _, row in df.iterrows():
+        home_id = str(row.get("home_id", ""))
+        away_id = str(row.get("away_id", ""))
+        event_id = row["event_id"]
+
+        feat = {"event_id": event_id}
+
+        # Features históricas do time da casa
+        if home_id and home_id in team_history:
+            hist = team_history[home_id][-window:]
+            for orig_col, alias in stat_cols.items():
+                vals = [h.get(orig_col) for h in hist if h.get(orig_col) is not None]
+                feat[f"hist_home_{alias}_avg"] = round(np.mean(vals), 2) if vals else None
+            feat["hist_home_games"] = len(hist)
+        else:
+            for alias in stat_cols.values():
+                feat[f"hist_home_{alias}_avg"] = None
+            feat["hist_home_games"] = 0
+
+        # Features históricas do time visitante
+        if away_id and away_id in team_history:
+            hist = team_history[away_id][-window:]
+            for orig_col, alias in stat_cols.items():
+                vals = [h.get(orig_col) for h in hist if h.get(orig_col) is not None]
+                feat[f"hist_away_{alias}_avg"] = round(np.mean(vals), 2) if vals else None
+            feat["hist_away_games"] = len(hist)
+        else:
+            for alias in stat_cols.values():
+                feat[f"hist_away_{alias}_avg"] = None
+            feat["hist_away_games"] = 0
+
+        result_rows.append(feat)
+
+        # Atualiza histórico: time da casa jogou em casa
+        game_stats = {col: row.get(col) for col in stat_cols}
+        team_history.setdefault(home_id, []).append(game_stats)
+
+        # Para o visitante, inverte home/away nas stats de escanteios
+        away_stats = dict(game_stats)
+        if "corners_home_total" in away_stats and "corners_away_total" in df.columns:
+            away_stats["corners_home_total"] = row.get("corners_away_total")
+            away_stats["corners_away_total"] = row.get("corners_home_total")
+        team_history.setdefault(away_id, []).append(away_stats)
+
+    return pd.DataFrame(result_rows)
+
+
+print("\nCalculando histórico dos times (rolling window=%d)..." % ROLLING_WINDOW)
+df_team_hist = build_team_history(df_pano)
+print(f"Histórico calculado para {len(df_team_hist):,} jogos")
+
 
 # %%
 # =============================================================================
@@ -68,27 +164,40 @@ print(df_pano["corners_total"].value_counts().sort_index().head(20))
 SNAPSHOT_MINUTES = [15, 30, 45, 60, 75]
 
 def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
+                         df_hist: pd.DataFrame,
                          snapshot_minutes: list[int]) -> pd.DataFrame:
     """
     Para cada jogo e cada minuto de snapshot:
       - Features: tudo que aconteceu ATÉ aquele minuto
+      - Features pré-jogo: odds, H2H, histórico dos times
+      - Features temporais: dia da semana, hora, mês
       - Target: total de escanteios do jogo inteiro (de df_pano)
     """
+    # Pré-indexa panorama e histórico por event_id
+    pano_idx = df_pano.set_index("event_id") if "event_id" in df_pano.columns else pd.DataFrame()
+    hist_idx = df_hist.set_index("event_id") if "event_id" in df_hist.columns else pd.DataFrame()
+
     records = []
 
     for event_id, group in df_snap.groupby("event_id"):
-        group = group.sort_values("minute").reset_index(drop=True)
-        pano  = df_pano[df_pano["event_id"] == event_id]
-        if pano.empty:
+        if event_id not in pano_idx.index:
             continue
-        pano = pano.iloc[0]
+        pano = pano_idx.loc[event_id]
+        if isinstance(pano, pd.DataFrame):
+            pano = pano.iloc[0]
+
+        hist = hist_idx.loc[event_id] if event_id in hist_idx.index else pd.Series(dtype=object)
+        if isinstance(hist, pd.DataFrame):
+            hist = hist.iloc[0]
+
+        group = group.sort_values("minute").reset_index(drop=True)
 
         for snap_min in snapshot_minutes:
             until = group[group["minute"] <= snap_min]
             if until.empty:
                 continue
 
-            last = until.iloc[-1]   # último snapshot disponível até snap_min
+            last = until.iloc[-1]
             n_minutes = len(until)
 
             # --- Features cumulativas até snap_min ---
@@ -137,9 +246,24 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                 "fouls_home":        last.get("fouls_home"),
                 "fouls_away":        last.get("fouls_away"),
 
+                # Saves, offsides, goal kicks (índices 9-11 do stats_trend)
+                "saves_home":        last.get("saves_home"),
+                "saves_away":        last.get("saves_away"),
+                "offsides_home":     last.get("offsides_home"),
+                "offsides_away":     last.get("offsides_away"),
+                "goal_kicks_home":   last.get("goal_kicks_home"),
+                "goal_kicks_away":   last.get("goal_kicks_away"),
+
                 # Score ao vivo no minuto
                 "score_home": last.get("score_home"),
                 "score_away": last.get("score_away"),
+
+                # Contexto de placar
+                "score_diff": _safe_sub(last.get("score_home"), last.get("score_away")),
+                "total_red_cards": (last.get("red_cards_home") or 0) +
+                                    (last.get("red_cards_away") or 0),
+                "red_card_diff": _safe_sub(last.get("red_cards_home"),
+                                           last.get("red_cards_away")),
 
                 # Diferenças home - away (assimetria de pressão)
                 "corners_diff":          _diff(last, "corners_home", "corners_away"),
@@ -157,13 +281,50 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                 "n_snap_minutes": n_minutes,
             }
 
+            # --- Features pré-jogo do panorama ---
+            # Odds
+            for col in ["corners_line", "corners_over_odds", "corners_under_odds",
+                        "asian_corners_line", "asian_corners_home_odds", "asian_corners_away_odds",
+                        "odds_home_win", "odds_draw", "odds_away_win",
+                        "goals_line", "goals_over_odds", "goals_under_odds",
+                        "btts_yes_odds", "btts_no_odds"]:
+                feat[col] = pano.get(col)
+
+            # H2H
+            for col in ["h2h_total_games", "h2h_avg_corners_total",
+                        "h2h_avg_corners_home", "h2h_avg_corners_away",
+                        "h2h_avg_goals_total"]:
+                feat[col] = pano.get(col)
+
+            # Stats adicionais do event/view
+            for col in ["throw_ins_home_total", "throw_ins_away_total",
+                        "tackles_home_total", "tackles_away_total"]:
+                feat[col] = pano.get(col)
+
+            # --- Features históricas dos times ---
+            for col in hist.index:
+                if col != "event_id" and col.startswith("hist_"):
+                    feat[col] = hist.get(col)
+
+            # --- Features temporais ---
+            kickoff = pd.to_datetime(feat.get("kickoff_dt"), errors="coerce")
+            if pd.notna(kickoff):
+                feat["day_of_week"]  = kickoff.dayofweek    # 0=segunda, 6=domingo
+                feat["hour_of_day"]  = kickoff.hour
+                feat["month"]        = kickoff.month
+                feat["is_weekend"]   = int(kickoff.dayofweek >= 5)
+            else:
+                feat["day_of_week"]  = None
+                feat["hour_of_day"]  = None
+                feat["month"]        = None
+                feat["is_weekend"]   = None
+
             # --- Target ---
             feat["target_corners_total"] = pano.get("corners_total")
             feat["target_corners_remaining"] = (
                 (pano.get("corners_total") or 0) -
                 ((last.get("corners_home") or 0) + (last.get("corners_away") or 0))
             )
-            # Target binário: haverá pelo menos mais 1 escanteio?
             feat["target_more_corners"] = int((feat["target_corners_remaining"] or 0) > 0)
 
             records.append(feat)
@@ -172,6 +333,8 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
 
 
 def _mean_col(df, col):
+    if col not in df.columns:
+        return None
     vals = df[col].dropna()
     return round(vals.mean(), 2) if len(vals) > 0 else None
 
@@ -184,8 +347,16 @@ def _diff(row, col_a, col_b):
     return a - b
 
 
+def _safe_sub(a, b):
+    if a is None or b is None:
+        return None
+    return a - b
+
+
 def _last_n_minutes(df, current_min, n, col):
     """Diferença no valor de `col` nos últimos N minutos."""
+    if col not in df.columns:
+        return None
     since = current_min - n
     past = df[df["minute"] <= since]
     recent = df[df["minute"] <= current_min]
@@ -200,7 +371,7 @@ def _last_n_minutes(df, current_min, n, col):
 
 # %%
 print("\nConstruindo dataset de features por minuto de snapshot...")
-df_features = build_live_features(df_snap, df_pano, SNAPSHOT_MINUTES)
+df_features = build_live_features(df_snap, df_pano, df_team_hist, SNAPSHOT_MINUTES)
 print(f"Features dataset: {len(df_features):,} linhas | {df_features['event_id'].nunique():,} jogos")
 
 # %%
@@ -222,9 +393,9 @@ num_cols = df_features.select_dtypes(include=[np.number]).columns.tolist()
 corr = (
     df_features[num_cols]
     .corr()["target_corners_total"]
-    .drop("target_corners_total")
+    .drop("target_corners_total", errors="ignore")
     .sort_values(key=abs, ascending=False)
-    .head(15)
+    .head(20)
 )
 print(corr.round(3).to_string())
 
@@ -250,56 +421,104 @@ try:
     import xgboost as xgb
 
     FEATURE_COLS = [
+        # Tempo do jogo
         "snap_minute",
+        # Escanteios ao vivo
         "corners_home_so_far", "corners_away_so_far", "corners_total_so_far",
         "corners_rate_per_min",
+        "corners_diff",
+        "corners_last_15_home", "corners_last_15_away",
+        # Posse
         "possession_home_avg", "possession_away_avg",
+        # Ataques
         "attacks_home", "attacks_away",
         "dangerous_attacks_home", "dangerous_attacks_away",
+        "attacks_diff", "dangerous_attacks_diff",
+        # Chutes
         "shots_on_target_home", "shots_on_target_away",
         "shots_off_target_home", "shots_off_target_away",
+        "shots_on_target_diff",
+        # Cartões e faltas
         "yellow_cards_home", "yellow_cards_away",
+        "red_cards_home", "red_cards_away",
         "fouls_home", "fouls_away",
+        # Saves, offsides, goal kicks
+        "saves_home", "saves_away",
+        "offsides_home", "offsides_away",
+        "goal_kicks_home", "goal_kicks_away",
+        # Placar e contexto
         "score_home", "score_away",
-        "corners_diff", "attacks_diff", "dangerous_attacks_diff", "shots_on_target_diff",
-        "corners_last_15_home", "corners_last_15_away",
+        "score_diff", "total_red_cards", "red_card_diff",
+        # Odds pré-jogo
+        "corners_line", "corners_over_odds", "corners_under_odds",
+        "asian_corners_line",
+        "odds_home_win", "odds_draw", "odds_away_win",
+        "goals_line", "goals_over_odds", "goals_under_odds",
+        "btts_yes_odds", "btts_no_odds",
+        # H2H
+        "h2h_total_games", "h2h_avg_corners_total",
+        "h2h_avg_corners_home", "h2h_avg_corners_away",
+        "h2h_avg_goals_total",
+        # Histórico dos times
+        "hist_home_corners_avg", "hist_away_corners_avg",
+        "hist_home_corners_scored_avg", "hist_away_corners_scored_avg",
+        "hist_home_corners_conceded_avg", "hist_away_corners_conceded_avg",
+        "hist_home_dangerous_attacks_avg", "hist_away_dangerous_attacks_avg",
+        "hist_home_goals_avg", "hist_away_goals_avg",
+        "hist_home_games", "hist_away_games",
+        # Temporais
+        "day_of_week", "hour_of_day", "month", "is_weekend",
     ]
+
+    # Filtra apenas features que existem no dataset (coleta pode não ter todos)
+    available_cols = [c for c in FEATURE_COLS if c in df_features.columns]
+    missing_cols = [c for c in FEATURE_COLS if c not in df_features.columns]
+    if missing_cols:
+        print(f"  Aviso: {len(missing_cols)} features ausentes no dataset (serão ignoradas):")
+        for c in missing_cols:
+            print(f"    - {c}")
 
     TARGET = "target_corners_total"
 
-    df_model = df_features[FEATURE_COLS + [TARGET]].dropna()
-    X = df_model[FEATURE_COLS]
-    y = df_model[TARGET]
+    df_model = df_features[available_cols + [TARGET]].dropna()
+    print(f"\n  Amostras para treino (após dropna): {len(df_model):,}")
+    print(f"  Features utilizadas: {len(available_cols)}")
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    if len(df_model) < 50:
+        print("  Dados insuficientes para treino. Colete mais jogos.")
+    else:
+        X = df_model[available_cols]
+        y = df_model[TARGET]
 
-    model = xgb.XGBRegressor(
-        n_estimators=300,
-        max_depth=6,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42,
-        verbosity=0,
-    )
-    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    preds = model.predict(X_test)
-    mae  = mean_absolute_error(y_test, preds)
-    rmse = root_mean_squared_error(y_test, preds)
-    print(f"  MAE  : {mae:.3f} escanteios")
-    print(f"  RMSE : {rmse:.3f} escanteios")
+        model = xgb.XGBRegressor(
+            n_estimators=300,
+            max_depth=6,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42,
+            verbosity=0,
+        )
+        model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
 
-    # Importância de features
-    feat_imp = pd.Series(model.feature_importances_, index=FEATURE_COLS)
-    print("\nTop 10 features mais importantes:")
-    print(feat_imp.sort_values(ascending=False).head(10).round(4).to_string())
+        preds = model.predict(X_test)
+        mae  = mean_absolute_error(y_test, preds)
+        rmse = root_mean_squared_error(y_test, preds)
+        print(f"\n  MAE  : {mae:.3f} escanteios")
+        print(f"  RMSE : {rmse:.3f} escanteios")
 
-    # Salva modelo
-    import joblib
-    model_path = DATA_DIR / "modelo_corners_xgb.joblib"
-    joblib.dump(model, model_path)
-    print(f"\nModelo salvo em: {model_path}")
+        # Importância de features
+        feat_imp = pd.Series(model.feature_importances_, index=available_cols)
+        print("\nTop 15 features mais importantes:")
+        print(feat_imp.sort_values(ascending=False).head(15).round(4).to_string())
+
+        # Salva modelo
+        import joblib
+        model_path = DATA_DIR / "modelo_corners_xgb.joblib"
+        joblib.dump(model, model_path)
+        print(f"\nModelo salvo em: {model_path}")
 
 except ImportError as e:
     print(f"  Pacote não instalado ({e}). Instale: pip install xgboost scikit-learn joblib")
