@@ -526,6 +526,7 @@ try:
         "attacks_home", "attacks_away",
         "dangerous_attacks_home", "dangerous_attacks_away",
         "attacks_diff", "dangerous_attacks_diff",
+        "dangerous_attacks_rate",
         # Chutes
         "shots_on_target_home", "shots_on_target_away",
         "shots_off_target_home", "shots_off_target_away",
