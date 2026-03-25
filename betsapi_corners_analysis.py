@@ -237,7 +237,8 @@ SNAPSHOT_MINUTES = [15, 30, 45, 60, 75]
 
 def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                          df_hist: pd.DataFrame,
-                         snapshot_minutes: list[int]) -> pd.DataFrame:
+                         snapshot_minutes: list[int],
+                         league_avg_map: dict | None = None) -> pd.DataFrame:
     """
     Para cada jogo e cada minuto de snapshot:
       - Features: tudo que aconteceu ATÉ aquele minuto
