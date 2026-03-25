@@ -341,6 +341,13 @@ def build_panorama_row(event_id: str, meta: dict, event_view: dict,
         "offsides_away_total":            _safe_last(snapshot_rows, "offsides_away"),
         "goal_kicks_home_total":          _safe_last(snapshot_rows, "goal_kicks_home"),
         "goal_kicks_away_total":          _safe_last(snapshot_rows, "goal_kicks_away"),
+        # Stats adicionais do event/view (não disponíveis no stats_trend)
+        "throw_ins_home_total":           throw_ins_h,
+        "throw_ins_away_total":           throw_ins_a,
+        "tackles_home_total":             tackles_h,
+        "tackles_away_total":             tackles_a,
+        "ball_safe_home_total":           ball_safe_h,
+        "ball_safe_away_total":           ball_safe_a,
         # Placar do intervalo (via event/view scores["1"])
         "ht_score_home":                  _extract_ht_score(event_view)[0],
         "ht_score_away":                  _extract_ht_score(event_view)[1],
