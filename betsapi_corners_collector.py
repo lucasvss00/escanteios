@@ -1,0 +1,715 @@
+"""
+=============================================================================
+BetsAPI – Coletor de Dados para Modelo de Escanteios
+=============================================================================
+Modos de operação:
+  1. HISTÓRICO  → coleta jogos finalizados (por dia ou range de datas)
+  2. AO VIVO    → monitora jogos em andamento em loop contínuo
+
+Dados coletados por minuto (stats_trend):
+  - Escanteios acumulados (home / away)
+  - Posse de bola (home / away)
+  - Chutes a gol / fora (on_target / off_target)
+  - Cartões amarelos / vermelhos
+  - Faltas
+  - Ataques
+  - Ataques perigosos
+
+Saída:
+  - {output_dir}/snapshots_por_minuto.parquet   ← série temporal por minuto
+  - {output_dir}/panorama_jogos.parquet          ← 1 linha por jogo finalizado
+  - {output_dir}/snapshots_por_minuto.csv        ← cópia CSV opcional
+  - {output_dir}/panorama_jogos.csv              ← cópia CSV opcional
+
+Uso rápido:
+  pip install requests pandas pyarrow tqdm
+
+  # Histórico – últimos 3 dias:
+  python betsapi_corners_collector.py --mode historico --days 3 --token SEU_TOKEN
+
+  # Ao vivo – polling a cada 60s:
+  python betsapi_corners_collector.py --mode live --interval 60 --token SEU_TOKEN
+
+  # Histórico – range específico:
+  python betsapi_corners_collector.py --mode historico \
+      --start 20240101 --end 20240131 --token SEU_TOKEN
+=============================================================================
+"""
+
+import argparse
+import logging
+import os
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+import requests
+from tqdm import tqdm
+
+# ---------------------------------------------------------------------------
+# Configuração de logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constantes
+# ---------------------------------------------------------------------------
+BASE_URL = "https://api.b365api.com"
+SPORT_ID = 1          # Futebol
+MAX_RETRIES = 3
+RETRY_DELAY = 5       # segundos entre tentativas
+REQUEST_DELAY = 0.35  # delay entre requests para respeitar rate limit
+
+
+# ---------------------------------------------------------------------------
+# Cliente HTTP
+# ---------------------------------------------------------------------------
+class BetsAPIClient:
+    """Wrapper simples para a BetsAPI com retry automático."""
+
+    def __init__(self, token: str):
+        self.token = token
+        self.session = requests.Session()
+        self.session.headers.update({"X-API-TOKEN": token})
+
+    def _get(self, endpoint: str, params: dict = None) -> dict:
+        url = f"{BASE_URL}{endpoint}"
+        params = params or {}
+        params.setdefault("token", self.token)
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                resp = self.session.get(url, params=params, timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("success") == 1:
+                    return data
+                log.warning("API retornou success=0 em %s: %s", endpoint, data.get("error", ""))
+                return data
+            except requests.RequestException as exc:
+                log.warning("Tentativa %d/%d falhou (%s): %s", attempt, MAX_RETRIES, endpoint, exc)
+                if attempt < MAX_RETRIES:
+                    time.sleep(RETRY_DELAY)
+        return {}
+
+    # ------------------------------------------------------------------
+    # Endpoints de eventos
+    # ------------------------------------------------------------------
+
+    def get_ended_events(self, day: str, page: int = 1, league_id: Optional[int] = None) -> dict:
+        """
+        Jogos finalizados de um dia específico.
+        day: formato YYYYMMDD
+        """
+        params = {"sport_id": SPORT_ID, "day": day, "page": page}
+        if league_id:
+            params["league_id"] = league_id
+        return self._get("/v3/events/ended", params)
+
+    def get_inplay_events(self) -> dict:
+        """Jogos ao vivo no momento."""
+        return self._get("/v3/events/inplay", {"sport_id": SPORT_ID})
+
+    def get_event_view(self, event_id: str) -> dict:
+        """Detalhes e placar final de um evento."""
+        return self._get("/v1/event/view", {"event_id": event_id})
+
+    def get_stats_trend(self, event_id: str) -> dict:
+        """
+        Série temporal de estatísticas por minuto.
+        Disponível para jogos a partir de 2017-06-10.
+        """
+        return self._get("/v1/event/stats_trend", {"event_id": event_id})
+
+    def get_prematch_odds(self, event_id: str) -> dict:
+        """Odds pré-jogo Bet365. Parâmetro FI = fixture/event ID."""
+        return self._get("/v3/bet365/prematch", {"FI": event_id})
+
+
+# ---------------------------------------------------------------------------
+# Parsers de resposta
+# ---------------------------------------------------------------------------
+
+def parse_score(score_str: Optional[str]) -> tuple[Optional[int], Optional[int]]:
+    """'2-1' → (2, 1). Retorna (None, None) se inválido."""
+    if not score_str or "-" not in str(score_str):
+        return None, None
+    try:
+        parts = str(score_str).split("-")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return None, None
+
+
+def parse_stat_value(val) -> tuple[Optional[int], Optional[int]]:
+    """
+    Stats vêm no formato "home_val:away_val" (ex: "4:7") ou como int/float.
+    Retorna (home, away).
+    """
+    if val is None:
+        return None, None
+    s = str(val)
+    if ":" in s:
+        try:
+            h, a = s.split(":")
+            return int(h), int(a)
+        except ValueError:
+            return None, None
+    try:
+        return int(val), None
+    except (ValueError, TypeError):
+        return None, None
+
+
+def extract_event_metadata(event: dict) -> dict:
+    """Extrai campos de identificação de um evento."""
+    league = event.get("league", {}) or {}
+    home   = event.get("home", {}) or {}
+    away   = event.get("away", {}) or {}
+    scores = event.get("ss", "")          # placar atual "home-away"
+    timer  = event.get("timer", {}) or {}
+
+    h_score, a_score = parse_score(scores)
+
+    return {
+        "event_id":    str(event.get("id", "")),
+        "league_id":   str(league.get("id", "")),
+        "league_name": league.get("name", ""),
+        "home_team":   home.get("name", ""),
+        "away_team":   away.get("name", ""),
+        "home_id":     str(home.get("id", "")),
+        "away_id":     str(away.get("id", "")),
+        "time_unix":   event.get("time", None),
+        "kickoff_dt":  datetime.utcfromtimestamp(int(event["time"])).isoformat()
+                       if event.get("time") else None,
+        "match_minute": timer.get("tm", None),
+        "match_second": timer.get("ts", None),
+        "score_home":  h_score,
+        "score_away":  a_score,
+    }
+
+
+def parse_stats_trend(raw_trend: list, event_id: str, meta: dict) -> list[dict]:
+    """
+    Converte a lista de snapshots do stats_trend em linhas de DataFrame.
+
+    Cada item da lista `raw_trend` representa um minuto do jogo e contém
+    pares de campos [home_val, away_val] por estatística.
+
+    Campos mapeados (baseado na documentação BetsAPI):
+      0  - corners
+      1  - attacks
+      2  - dangerous_attacks
+      3  - on_target (chutes a gol)
+      4  - off_target (chutes fora)
+      5  - possession %
+      6  - yellow_cards
+      7  - red_cards
+      8  - free_kicks / faltas
+    """
+    FIELD_MAP = {
+        0: ("corners_home",           "corners_away"),
+        1: ("attacks_home",           "attacks_away"),
+        2: ("dangerous_attacks_home", "dangerous_attacks_away"),
+        3: ("shots_on_target_home",   "shots_on_target_away"),
+        4: ("shots_off_target_home",  "shots_off_target_away"),
+        5: ("possession_home",        "possession_away"),
+        6: ("yellow_cards_home",      "yellow_cards_away"),
+        7: ("red_cards_home",         "red_cards_away"),
+        8: ("fouls_home",             "fouls_away"),
+        9: ("saves_home",             "saves_away"),
+        10: ("offsides_home",         "offsides_away"),
+        11: ("goal_kicks_home",       "goal_kicks_away"),
+    }
+
+    rows = []
+    if not raw_trend:
+        return rows
+
+    for minute_idx, snapshot in enumerate(raw_trend):
+        row = {
+            "event_id":    event_id,
+            "minute":      minute_idx + 1,
+            **{k: v for k, v in meta.items()},
+        }
+        # snapshot pode ser lista de listas ou dict — BetsAPI retorna lista
+        stats_list = snapshot if isinstance(snapshot, list) else []
+        for field_idx, (home_col, away_col) in FIELD_MAP.items():
+            if field_idx < len(stats_list):
+                entry = stats_list[field_idx]
+                if isinstance(entry, list) and len(entry) >= 2:
+                    row[home_col] = _to_int(entry[0])
+                    row[away_col] = _to_int(entry[1])
+                elif isinstance(entry, str) and ":" in entry:
+                    h, a = parse_stat_value(entry)
+                    row[home_col] = h
+                    row[away_col] = a
+                else:
+                    row[home_col] = None
+                    row[away_col] = None
+            else:
+                row[home_col] = None
+                row[away_col] = None
+
+        rows.append(row)
+    return rows
+
+
+def _to_int(val) -> Optional[int]:
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def build_panorama_row(event_id: str, meta: dict, event_view: dict,
+                       snapshot_rows: list[dict]) -> dict:
+    """
+    Cria 1 linha de resumo por jogo para o panorama final.
+    Inclui totais finais e médias por minuto (útil para features de ML).
+    """
+    result = event_view.get("results", [{}]) or [{}]
+    result = result[0] if result else {}
+    stats  = result.get("stats", {}) or {}
+
+    # Placar final via /event/view (mais confiável que inplay)
+    ss = result.get("ss", meta.get("score_home", ""))
+    final_h, final_a = parse_score(ss)
+
+    def s(key):
+        h, a = parse_stat_value(stats.get(key))
+        return h, a
+
+    corners_h, corners_a = s("corners")
+
+    row = {
+        "event_id":         event_id,
+        "league_id":        meta["league_id"],
+        "league_name":      meta["league_name"],
+        "home_team":        meta["home_team"],
+        "away_team":        meta["away_team"],
+        "kickoff_dt":       meta["kickoff_dt"],
+        # Placar final
+        "final_score_home": final_h,
+        "final_score_away": final_a,
+        "total_goals":      (final_h or 0) + (final_a or 0),
+        # Escanteios totais (fonte: /event/view stats)
+        "corners_home_total":             corners_h,
+        "corners_away_total":             corners_a,
+        "corners_total":                  (corners_h or 0) + (corners_a or 0),
+        # Demais stats finais
+        "possession_home_avg":            _safe_avg(snapshot_rows, "possession_home"),
+        "possession_away_avg":            _safe_avg(snapshot_rows, "possession_away"),
+        "shots_on_target_home_total":     _safe_last(snapshot_rows, "shots_on_target_home"),
+        "shots_on_target_away_total":     _safe_last(snapshot_rows, "shots_on_target_away"),
+        "shots_off_target_home_total":    _safe_last(snapshot_rows, "shots_off_target_home"),
+        "shots_off_target_away_total":    _safe_last(snapshot_rows, "shots_off_target_away"),
+        "attacks_home_total":             _safe_last(snapshot_rows, "attacks_home"),
+        "attacks_away_total":             _safe_last(snapshot_rows, "attacks_away"),
+        "dangerous_attacks_home_total":   _safe_last(snapshot_rows, "dangerous_attacks_home"),
+        "dangerous_attacks_away_total":   _safe_last(snapshot_rows, "dangerous_attacks_away"),
+        "yellow_cards_home_total":        _safe_last(snapshot_rows, "yellow_cards_home"),
+        "yellow_cards_away_total":        _safe_last(snapshot_rows, "yellow_cards_away"),
+        "red_cards_home_total":           _safe_last(snapshot_rows, "red_cards_home"),
+        "red_cards_away_total":           _safe_last(snapshot_rows, "red_cards_away"),
+        "fouls_home_total":               _safe_last(snapshot_rows, "fouls_home"),
+        "fouls_away_total":               _safe_last(snapshot_rows, "fouls_away"),
+        # Saves / Offsides / Goal kicks (índices 9-11 do stats_trend)
+        "saves_home_total":               _safe_last(snapshot_rows, "saves_home"),
+        "saves_away_total":               _safe_last(snapshot_rows, "saves_away"),
+        "offsides_home_total":            _safe_last(snapshot_rows, "offsides_home"),
+        "offsides_away_total":            _safe_last(snapshot_rows, "offsides_away"),
+        "goal_kicks_home_total":          _safe_last(snapshot_rows, "goal_kicks_home"),
+        "goal_kicks_away_total":          _safe_last(snapshot_rows, "goal_kicks_away"),
+        # Placar do intervalo (via event/view scores["1"])
+        "ht_score_home":                  _extract_ht_score(event_view)[0],
+        "ht_score_away":                  _extract_ht_score(event_view)[1],
+        # Escanteios por tempo (1º e 2º)
+        "corners_home_ht":   _safe_last_filtered(snapshot_rows, "corners_home",  lambda m: m <= 45),
+        "corners_away_ht":   _safe_last_filtered(snapshot_rows, "corners_away",  lambda m: m <= 45),
+        "corners_ht_total":  (_safe_last_filtered(snapshot_rows, "corners_home", lambda m: m <= 45) or 0)
+                             + (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0),
+        "corners_home_2h":   (corners_h or 0) - (_safe_last_filtered(snapshot_rows, "corners_home", lambda m: m <= 45) or 0),
+        "corners_away_2h":   (corners_a or 0) - (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0),
+        "corners_2h_total":  (corners_h or 0) + (corners_a or 0)
+                             - (_safe_last_filtered(snapshot_rows, "corners_home", lambda m: m <= 45) or 0)
+                             - (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0),
+        # Minuto do primeiro escanteio (útil para ML ao vivo)
+        "first_corner_minute":            _first_corner_minute(snapshot_rows),
+        "total_snapshot_minutes":         len(snapshot_rows),
+    }
+    return row
+
+
+def _safe_avg(rows, col) -> Optional[float]:
+    vals = [r[col] for r in rows if r.get(col) is not None]
+    return round(sum(vals) / len(vals), 2) if vals else None
+
+
+def _safe_last(rows, col) -> Optional[int]:
+    """Pega o último valor não-nulo da série (valor acumulado ao final)."""
+    for r in reversed(rows):
+        if r.get(col) is not None:
+            return r[col]
+    return None
+
+
+def _first_corner_minute(rows) -> Optional[int]:
+    """Minuto em que aparece o primeiro escanteio (home ou away > 0)."""
+    for r in rows:
+        h = r.get("corners_home") or 0
+        a = r.get("corners_away") or 0
+        if h + a > 0:
+            return r["minute"]
+    return None
+
+
+def _safe_last_filtered(rows, col, minute_filter_fn) -> Optional[int]:
+    """Último valor não-nulo de `col` entre linhas que passam no filtro de minuto."""
+    filtered = [r for r in rows if minute_filter_fn(r.get("minute", 0))]
+    return _safe_last(filtered, col)
+
+
+def _extract_ht_score(event_view: dict) -> tuple[Optional[int], Optional[int]]:
+    """
+    Extrai placar do intervalo do event_view.
+    BetsAPI armazena scores por período: scores["1"]["home"] / ["away"]
+    """
+    try:
+        result = (event_view.get("results", [{}]) or [{}])[0]
+        scores = result.get("scores", {}) or {}
+        ht = scores.get("1", {}) or {}
+        return _to_int(ht.get("home")), _to_int(ht.get("away"))
+    except (IndexError, AttributeError, TypeError):
+        return None, None
+
+
+def parse_corner_odds(odds_resp: dict) -> dict:
+    """
+    Extrai odds de escanteios da resposta /v3/bet365/prematch.
+
+    Estrutura esperada (sp = odds_resp["results"][0]["main"]["sp"]):
+      sp["corners"]["odds"]       → lista com Over/Under e header (linha, ex: "10.5")
+      sp["asian_corners"]["odds"] → lista com Home/Away e header (handicap)
+
+    Retorna dict com 6 chaves (todas None se dados indisponíveis).
+    """
+    result = {
+        "corners_line":            None,
+        "corners_over_odds":       None,
+        "corners_under_odds":      None,
+        "asian_corners_line":      None,
+        "asian_corners_home_odds": None,
+        "asian_corners_away_odds": None,
+    }
+    try:
+        sp = (
+            (odds_resp.get("results", [{}]) or [{}])[0]
+            .get("main", {})
+            .get("sp", {})
+        )
+        for entry in (sp.get("corners", {}).get("odds", []) or []):
+            name = str(entry.get("name", "")).lower()
+            header, odds_v = entry.get("header"), entry.get("odds")
+            if name == "over" and odds_v is not None:
+                result["corners_over_odds"] = float(odds_v)
+                result["corners_line"] = float(header) if header else None
+            elif name == "under" and odds_v is not None:
+                result["corners_under_odds"] = float(odds_v)
+        for entry in (sp.get("asian_corners", {}).get("odds", []) or []):
+            name = str(entry.get("name", "")).lower()
+            header, odds_v = entry.get("header"), entry.get("odds")
+            if name == "home" and odds_v is not None:
+                result["asian_corners_home_odds"] = float(odds_v)
+                result["asian_corners_line"] = float(header) if header else None
+            elif name == "away" and odds_v is not None:
+                result["asian_corners_away_odds"] = float(odds_v)
+    except (IndexError, AttributeError, TypeError, KeyError, ValueError):
+        pass
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Salvamento incremental
+# ---------------------------------------------------------------------------
+
+class DataSaver:
+    """Mantém dois buffers em memória e salva em Parquet + CSV."""
+
+    def __init__(self, output_dir: str, save_csv: bool = True):
+        self.out = Path(output_dir)
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.save_csv = save_csv
+        self.snapshots: list[dict] = []
+        self.panoramas: list[dict] = []
+
+    def add_snapshots(self, rows: list[dict]):
+        self.snapshots.extend(rows)
+
+    def add_panorama(self, row: dict):
+        self.panoramas.append(row)
+
+    def flush(self):
+        """Grava tudo no disco. Chame periodicamente ou ao final."""
+        self._save_df(self.snapshots, "snapshots_por_minuto")
+        self._save_df(self.panoramas, "panorama_jogos")
+        log.info("Dados salvos → %s (%d snapshots, %d jogos)",
+                 self.out, len(self.snapshots), len(self.panoramas))
+
+    def _save_df(self, data: list[dict], name: str):
+        if not data:
+            return
+        df = pd.DataFrame(data)
+        pq_path = self.out / f"{name}.parquet"
+        df.to_parquet(pq_path, index=False)
+        if self.save_csv:
+            df.to_csv(self.out / f"{name}.csv", index=False)
+
+
+# ---------------------------------------------------------------------------
+# Modo HISTÓRICO
+# ---------------------------------------------------------------------------
+
+def run_historico(
+    client: BetsAPIClient,
+    saver: DataSaver,
+    start_day: str,
+    end_day: str,
+    league_id: Optional[int] = None,
+    flush_every: int = 50,
+):
+    """
+    Itera de start_day até end_day (inclusive), coleta todos os jogos
+    finalizados de futebol, seus stats_trend e panorama.
+
+    start_day / end_day: formato YYYYMMDD
+    """
+    start = datetime.strptime(start_day, "%Y%m%d")
+    end   = datetime.strptime(end_day,   "%Y%m%d")
+    days  = [(start + timedelta(days=i)).strftime("%Y%m%d")
+             for i in range((end - start).days + 1)]
+
+    log.info("Iniciando coleta histórica: %s → %s (%d dias)", start_day, end_day, len(days))
+    total_events = 0
+
+    for day in tqdm(days, desc="Dias"):
+        page = 1
+        while True:
+            resp = client.get_ended_events(day, page=page, league_id=league_id)
+            time.sleep(REQUEST_DELAY)
+
+            events = resp.get("results", []) or []
+            if not events:
+                break
+
+            for event in events:
+                event_id = str(event.get("id", ""))
+                if not event_id:
+                    continue
+
+                meta = extract_event_metadata(event)
+
+                # Stats trend (série por minuto)
+                trend_resp = client.get_stats_trend(event_id)
+                time.sleep(REQUEST_DELAY)
+                raw_trend = trend_resp.get("results", []) or []
+                snapshot_rows = parse_stats_trend(raw_trend, event_id, meta)
+
+                # Detalhes do jogo para panorama
+                view_resp = client.get_event_view(event_id)
+                time.sleep(REQUEST_DELAY)
+                panorama_row = build_panorama_row(event_id, meta, view_resp, snapshot_rows)
+
+                # Odds pré-jogo de escanteios (Bet365 prematch)
+                odds_resp = client.get_prematch_odds(event_id)
+                time.sleep(REQUEST_DELAY)
+                panorama_row.update(parse_corner_odds(odds_resp))
+
+                saver.add_snapshots(snapshot_rows)
+                saver.add_panorama(panorama_row)
+                total_events += 1
+
+                if total_events % flush_every == 0:
+                    saver.flush()
+
+            # Paginação
+            pager = resp.get("pager", {}) or {}
+            total_pages = pager.get("total_pages", 1)
+            if page >= int(total_pages):
+                break
+            page += 1
+
+    saver.flush()
+    log.info("Coleta histórica concluída. Total de jogos: %d", total_events)
+
+
+# ---------------------------------------------------------------------------
+# Modo AO VIVO
+# ---------------------------------------------------------------------------
+
+def run_live(
+    client: BetsAPIClient,
+    saver: DataSaver,
+    interval: int = 60,
+    max_iterations: Optional[int] = None,
+):
+    """
+    Loop contínuo que:
+      1. Busca todos os jogos ao vivo (/v3/events/inplay)
+      2. Para cada jogo, coleta stats_trend do minuto atual
+      3. Aguarda `interval` segundos antes do próximo ciclo
+      4. Ao detectar que um jogo terminou, coleta o panorama final
+
+    max_iterations: útil para testes (None = loop infinito)
+    """
+    log.info("Iniciando modo AO VIVO (intervalo: %ds). Ctrl+C para encerrar.", interval)
+    active_events: dict[str, dict] = {}  # event_id → meta
+    iteration = 0
+
+    try:
+        while True:
+            if max_iterations is not None and iteration >= max_iterations:
+                break
+            iteration += 1
+            log.info("--- Ciclo %d | %s ---", iteration, datetime.utcnow().isoformat())
+
+            inplay_resp = client.get_inplay_events()
+            time.sleep(REQUEST_DELAY)
+            live_events = inplay_resp.get("results", []) or []
+            live_ids = set()
+
+            for event in live_events:
+                event_id = str(event.get("id", ""))
+                if not event_id:
+                    continue
+                live_ids.add(event_id)
+                meta = extract_event_metadata(event)
+                active_events[event_id] = meta
+
+                # Snapshot do minuto atual
+                trend_resp = client.get_stats_trend(event_id)
+                time.sleep(REQUEST_DELAY)
+                raw_trend = trend_resp.get("results", []) or []
+                snapshot_rows = parse_stats_trend(raw_trend, event_id, meta)
+
+                if snapshot_rows:
+                    # Salva apenas o snapshot do minuto mais recente
+                    saver.add_snapshots([snapshot_rows[-1]])
+
+            # Detecta jogos que saíram do ao vivo (terminaram)
+            finished = set(active_events.keys()) - live_ids
+            for event_id in finished:
+                meta = active_events.pop(event_id)
+                log.info("Jogo finalizado detectado: %s vs %s (id=%s)",
+                         meta["home_team"], meta["away_team"], event_id)
+
+                # Coleta panorama final
+                trend_resp = client.get_stats_trend(event_id)
+                time.sleep(REQUEST_DELAY)
+                raw_trend = trend_resp.get("results", []) or []
+                all_snapshots = parse_stats_trend(raw_trend, event_id, meta)
+
+                view_resp = client.get_event_view(event_id)
+                time.sleep(REQUEST_DELAY)
+                panorama_row = build_panorama_row(event_id, meta, view_resp, all_snapshots)
+                saver.add_panorama(panorama_row)
+
+            saver.flush()
+            log.info("Jogos ao vivo: %d | Finalizados neste ciclo: %d", len(live_ids), len(finished))
+
+            time.sleep(interval)
+
+    except KeyboardInterrupt:
+        log.info("Interrompido pelo usuário.")
+        saver.flush()
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Coletor de dados de escanteios via BetsAPI"
+    )
+    parser.add_argument(
+        "--token", required=True,
+        help="Token de autenticação da BetsAPI"
+    )
+    parser.add_argument(
+        "--mode", choices=["historico", "live"], default="historico",
+        help="Modo de operação: 'historico' ou 'live'"
+    )
+    parser.add_argument(
+        "--output", default="dados_escanteios",
+        help="Diretório de saída para os arquivos (padrão: dados_escanteios)"
+    )
+    # Histórico
+    parser.add_argument(
+        "--start", default=None,
+        help="Data início YYYYMMDD (modo historico). Padrão: 7 dias atrás"
+    )
+    parser.add_argument(
+        "--end", default=None,
+        help="Data fim YYYYMMDD (modo historico). Padrão: ontem"
+    )
+    parser.add_argument(
+        "--days", type=int, default=None,
+        help="Atalho: coletar os últimos N dias (ignora --start/--end)"
+    )
+    parser.add_argument(
+        "--league-id", type=int, default=None,
+        help="Filtrar por league_id específico (opcional)"
+    )
+    # Live
+    parser.add_argument(
+        "--interval", type=int, default=60,
+        help="Intervalo em segundos entre ciclos no modo live (padrão: 60)"
+    )
+    parser.add_argument(
+        "--no-csv", action="store_true",
+        help="Não gerar cópias CSV (apenas Parquet)"
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    client = BetsAPIClient(token=args.token)
+    saver  = DataSaver(output_dir=args.output, save_csv=not args.no_csv)
+
+    if args.mode == "historico":
+        today = datetime.utcnow()
+        if args.days:
+            end_day   = (today - timedelta(days=1)).strftime("%Y%m%d")
+            start_day = (today - timedelta(days=args.days)).strftime("%Y%m%d")
+        else:
+            end_day   = args.end   or (today - timedelta(days=1)).strftime("%Y%m%d")
+            start_day = args.start or (today - timedelta(days=7)).strftime("%Y%m%d")
+
+        run_historico(
+            client=client,
+            saver=saver,
+            start_day=start_day,
+            end_day=end_day,
+            league_id=args.league_id,
+        )
+
+    elif args.mode == "live":
+        run_live(
+            client=client,
+            saver=saver,
+            interval=args.interval,
+        )
+
+
+if __name__ == "__main__":
+    main()

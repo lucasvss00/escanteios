@@ -1,0 +1,34 @@
+# Dados grandes - não versionar
+dataset_corners_features_w5.csv
+dados_escanteios/
+football_data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Ambientes
+.conda/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Saídas geradas (arquivos grandes ou gerados automaticamente)
+*.parquet
+*.csv
