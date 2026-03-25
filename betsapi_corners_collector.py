@@ -399,23 +399,37 @@ def _extract_ht_score(event_view: dict) -> tuple[Optional[int], Optional[int]]:
         return None, None
 
 
-def parse_corner_odds(odds_resp: dict) -> dict:
+def parse_prematch_odds(odds_resp: dict) -> dict:
     """
-    Extrai odds de escanteios da resposta /v3/bet365/prematch.
+    Extrai odds pré-jogo da resposta /v3/bet365/prematch.
 
-    Estrutura esperada (sp = odds_resp["results"][0]["main"]["sp"]):
-      sp["corners"]["odds"]       → lista com Over/Under e header (linha, ex: "10.5")
-      sp["asian_corners"]["odds"] → lista com Home/Away e header (handicap)
+    Mercados extraídos:
+      - corners (Over/Under) + asian_corners (Home/Away)
+      - match_result / full_time_result (1x2)
+      - goals_over_under (Goals O/U)
+      - both_teams_to_score (BTTS)
 
-    Retorna dict com 6 chaves (todas None se dados indisponíveis).
+    Retorna dict com todas as chaves (None se dados indisponíveis).
     """
     result = {
+        # Escanteios
         "corners_line":            None,
         "corners_over_odds":       None,
         "corners_under_odds":      None,
         "asian_corners_line":      None,
         "asian_corners_home_odds": None,
         "asian_corners_away_odds": None,
+        # Resultado 1x2
+        "odds_home_win":           None,
+        "odds_draw":               None,
+        "odds_away_win":           None,
+        # Gols Over/Under
+        "goals_line":              None,
+        "goals_over_odds":         None,
+        "goals_under_odds":        None,
+        # BTTS (ambas marcam)
+        "btts_yes_odds":           None,
+        "btts_no_odds":            None,
     }
     try:
         sp = (
@@ -423,6 +437,8 @@ def parse_corner_odds(odds_resp: dict) -> dict:
             .get("main", {})
             .get("sp", {})
         )
+
+        # --- Escanteios Over/Under ---
         for entry in (sp.get("corners", {}).get("odds", []) or []):
             name = str(entry.get("name", "")).lower()
             header, odds_v = entry.get("header"), entry.get("odds")
@@ -431,6 +447,8 @@ def parse_corner_odds(odds_resp: dict) -> dict:
                 result["corners_line"] = float(header) if header else None
             elif name == "under" and odds_v is not None:
                 result["corners_under_odds"] = float(odds_v)
+
+        # --- Asian Corners ---
         for entry in (sp.get("asian_corners", {}).get("odds", []) or []):
             name = str(entry.get("name", "")).lower()
             header, odds_v = entry.get("header"), entry.get("odds")
@@ -439,6 +457,45 @@ def parse_corner_odds(odds_resp: dict) -> dict:
                 result["asian_corners_line"] = float(header) if header else None
             elif name == "away" and odds_v is not None:
                 result["asian_corners_away_odds"] = float(odds_v)
+
+        # --- Resultado 1x2 ---
+        # BetsAPI pode usar diferentes chaves para o mercado 1x2
+        match_sp = sp.get("match_result") or sp.get("full_time_result") or {}
+        for entry in (match_sp.get("odds", []) or []):
+            name = str(entry.get("name", "")).strip()
+            odds_v = entry.get("odds")
+            if odds_v is None:
+                continue
+            if name in ("1", "Home"):
+                result["odds_home_win"] = float(odds_v)
+            elif name in ("X", "Draw"):
+                result["odds_draw"] = float(odds_v)
+            elif name in ("2", "Away"):
+                result["odds_away_win"] = float(odds_v)
+
+        # --- Gols Over/Under ---
+        goals_sp = sp.get("goals_over_under") or sp.get("totals") or {}
+        for entry in (goals_sp.get("odds", []) or []):
+            name = str(entry.get("name", "")).lower()
+            header, odds_v = entry.get("header"), entry.get("odds")
+            if name == "over" and odds_v is not None:
+                result["goals_over_odds"] = float(odds_v)
+                result["goals_line"] = float(header) if header else None
+            elif name == "under" and odds_v is not None:
+                result["goals_under_odds"] = float(odds_v)
+
+        # --- BTTS (ambas marcam) ---
+        btts_sp = sp.get("both_teams_to_score") or sp.get("btts") or {}
+        for entry in (btts_sp.get("odds", []) or []):
+            name = str(entry.get("name", "")).lower()
+            odds_v = entry.get("odds")
+            if odds_v is None:
+                continue
+            if name in ("yes", "sim"):
+                result["btts_yes_odds"] = float(odds_v)
+            elif name in ("no", "não", "nao"):
+                result["btts_no_odds"] = float(odds_v)
+
     except (IndexError, AttributeError, TypeError, KeyError, ValueError):
         pass
     return result
