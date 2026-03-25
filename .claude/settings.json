@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"c:/Users/Lucas/Desktop/FIFA/escanteios\" && git diff --quiet && git diff --cached --quiet || (git add -A && git commit -m \"auto: atualização via Claude Code\" && git push origin main) 2>/dev/null || true",
+            "timeout": 30,
+            "statusMessage": "Sincronizando com GitHub..."
+          }
+        ]
+      }
+    ]
+  }
+}
