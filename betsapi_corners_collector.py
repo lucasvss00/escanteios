@@ -661,6 +661,7 @@ def run_historico(
 
     log.info("Iniciando coleta histórica: %s → %s (%d dias)", start_day, end_day, len(days))
     total_events = 0
+    h2h_cache: dict[tuple[str, str], dict] = {}  # (home_id, away_id) → H2H
 
     for day in tqdm(days, desc="Dias"):
         page = 1
@@ -690,10 +691,18 @@ def run_historico(
                 time.sleep(REQUEST_DELAY)
                 panorama_row = build_panorama_row(event_id, meta, view_resp, snapshot_rows)
 
-                # Odds pré-jogo de escanteios (Bet365 prematch)
+                # Odds pré-jogo (escanteios + 1x2 + gols + BTTS)
                 odds_resp = client.get_prematch_odds(event_id)
                 time.sleep(REQUEST_DELAY)
-                panorama_row.update(parse_corner_odds(odds_resp))
+                panorama_row.update(parse_prematch_odds(odds_resp))
+
+                # H2H (confronto direto) — com cache por par de times
+                pair_key = (meta["home_id"], meta["away_id"])
+                if pair_key not in h2h_cache:
+                    h2h_resp = client.get_h2h(event_id)
+                    time.sleep(REQUEST_DELAY)
+                    h2h_cache[pair_key] = parse_h2h_corners(h2h_resp)
+                panorama_row.update(h2h_cache[pair_key])
 
                 saver.add_snapshots(snapshot_rows)
                 saver.add_panorama(panorama_row)
