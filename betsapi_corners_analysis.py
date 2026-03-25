@@ -519,6 +519,7 @@ try:
         "corners_rate_per_min",
         "corners_diff",
         "corners_last_15_home", "corners_last_15_away",
+        "corners_per_attack_ratio",
         # Posse
         "possession_home_avg", "possession_away_avg",
         # Ataques
