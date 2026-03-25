@@ -3,7 +3,19 @@
     "allow": [
       "Bash(gh auth:*)",
       "Bash(python3 -c \"import sys,json; json.load\\(sys.stdin\\); print\\(''''JSON válido''''\\)\")",
-      "Bash(node -e \"JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(''''.claude/settings.json'''',''''utf8''''\\)\\); console.log\\(''''JSON válido''''\\)\")"
+      "Bash(node -e \"JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(''''.claude/settings.json'''',''''utf8''''\\)\\); console.log\\(''''JSON válido''''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''collector OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''betsapi_corners_analysis.py'', doraise=True\\); print\\(''analysis OK''\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''collector OK''\\)\")",
+      "Bash(py -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''collector OK''\\)\")",
+      "Bash(where python3.exe)",
+      "Bash(where python:*)",
+      "Bash(ls /c/Python*/python.exe)",
+      "Read(//c/Users/Lucas/AppData/Local/Programs/Python/**)",
+      "Bash(/c/Users/Lucas/AppData/Local/Microsoft/WindowsApps/python3.exe -c \"import py_compile; py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_collector.py'', doraise=True\\); print\\(''collector OK''\\); py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', doraise=True\\); print\\(''analysis OK''\\)\")",
+      "Bash(ls /c/Python3*/python.exe)",
+      "Read(//c/Users/Lucas/**)",
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_collector.py'', doraise=True\\); print\\(''collector OK''\\); py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', doraise=True\\); print\\(''analysis OK''\\)\")"
     ]
   }
 }

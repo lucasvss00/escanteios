@@ -93,14 +93,27 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
 
     # Acumula histórico por time (home_id e away_id)
     team_history: dict[str, list[dict]] = {}
+    last_game_date: dict[str, pd.Timestamp] = {}
     result_rows = []
 
     for _, row in df.iterrows():
         home_id = str(row.get("home_id", ""))
         away_id = str(row.get("away_id", ""))
         event_id = row["event_id"]
+        current_dt = row.get("kickoff_dt_parsed")
 
         feat = {"event_id": event_id}
+
+        # --- Dias de descanso desde o último jogo ---
+        if home_id and home_id in last_game_date and pd.notna(current_dt) and pd.notna(last_game_date[home_id]):
+            feat["days_rest_home"] = int((current_dt - last_game_date[home_id]).days)
+        else:
+            feat["days_rest_home"] = None
+
+        if away_id and away_id in last_game_date and pd.notna(current_dt) and pd.notna(last_game_date[away_id]):
+            feat["days_rest_away"] = int((current_dt - last_game_date[away_id]).days)
+        else:
+            feat["days_rest_away"] = None
 
         # Features históricas do time da casa
         if home_id and home_id in team_history:
@@ -109,10 +122,16 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
                 vals = [h.get(orig_col) for h in hist if h.get(orig_col) is not None]
                 feat[f"hist_home_{alias}_avg"] = round(np.mean(vals), 2) if vals else None
             feat["hist_home_games"] = len(hist)
+            # Mando: média de escanteios apenas nos jogos em CASA
+            home_games = [h for h in hist if h.get("_is_home") is True]
+            hh_vals = [h.get("corners_home_total") for h in home_games
+                       if h.get("corners_home_total") is not None]
+            feat["hist_home_corners_home_avg"] = round(np.mean(hh_vals), 2) if hh_vals else None
         else:
             for alias in stat_cols.values():
                 feat[f"hist_home_{alias}_avg"] = None
             feat["hist_home_games"] = 0
+            feat["hist_home_corners_home_avg"] = None
 
         # Features históricas do time visitante
         if away_id and away_id in team_history:
@@ -121,23 +140,38 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
                 vals = [h.get(orig_col) for h in hist if h.get(orig_col) is not None]
                 feat[f"hist_away_{alias}_avg"] = round(np.mean(vals), 2) if vals else None
             feat["hist_away_games"] = len(hist)
+            # Mando: média de escanteios apenas nos jogos FORA
+            # (corners_home_total já foi invertido para away_stats → representa corners do time visitante)
+            away_games = [h for h in hist if h.get("_is_home") is False]
+            aa_vals = [h.get("corners_home_total") for h in away_games
+                       if h.get("corners_home_total") is not None]
+            feat["hist_away_corners_away_avg"] = round(np.mean(aa_vals), 2) if aa_vals else None
         else:
             for alias in stat_cols.values():
                 feat[f"hist_away_{alias}_avg"] = None
             feat["hist_away_games"] = 0
+            feat["hist_away_corners_away_avg"] = None
 
         result_rows.append(feat)
 
         # Atualiza histórico: time da casa jogou em casa
         game_stats = {col: row.get(col) for col in stat_cols}
+        game_stats["_is_home"] = True
         team_history.setdefault(home_id, []).append(game_stats)
 
-        # Para o visitante, inverte home/away nas stats de escanteios
+        # Para o visitante, inverte home/away nas stats de escanteios e marca como away
         away_stats = dict(game_stats)
         if "corners_home_total" in away_stats and "corners_away_total" in df.columns:
             away_stats["corners_home_total"] = row.get("corners_away_total")
             away_stats["corners_away_total"] = row.get("corners_home_total")
+        away_stats["_is_home"] = False
         team_history.setdefault(away_id, []).append(away_stats)
+
+        # Atualiza última data de jogo
+        if home_id and pd.notna(current_dt):
+            last_game_date[home_id] = current_dt
+        if away_id and pd.notna(current_dt):
+            last_game_date[away_id] = current_dt
 
     return pd.DataFrame(result_rows)
 
