@@ -352,6 +352,23 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
 
                 # Número real de snapshots disponíveis
                 "n_snap_minutes": n_minutes,
+
+                # Média histórica de escanteios da liga (jogos anteriores, sem data leak)
+                "league_avg_corners": league_avg_map.get(str(event_id)) if league_avg_map else None,
+
+                # Taxa de ataques perigosos por minuto
+                "dangerous_attacks_rate": round(
+                    ((last.get("dangerous_attacks_home") or 0) +
+                     (last.get("dangerous_attacks_away") or 0))
+                    / max(snap_min, 1), 4
+                ),
+
+                # Proporção de escanteios por ataque total
+                "corners_per_attack_ratio": round(
+                    ((last.get("corners_home") or 0) + (last.get("corners_away") or 0))
+                    / max((last.get("attacks_home") or 0) + (last.get("attacks_away") or 0), 1),
+                    4
+                ),
             }
 
             # --- Features pré-jogo do panorama ---
