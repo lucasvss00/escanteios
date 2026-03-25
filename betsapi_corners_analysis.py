@@ -556,9 +556,13 @@ try:
         "hist_home_corners_avg", "hist_away_corners_avg",
         "hist_home_corners_scored_avg", "hist_away_corners_scored_avg",
         "hist_home_corners_conceded_avg", "hist_away_corners_conceded_avg",
+        "hist_home_corners_home_avg", "hist_away_corners_away_avg",
         "hist_home_dangerous_attacks_avg", "hist_away_dangerous_attacks_avg",
         "hist_home_goals_avg", "hist_away_goals_avg",
         "hist_home_games", "hist_away_games",
+        "days_rest_home", "days_rest_away",
+        # Liga
+        "league_avg_corners",
         # Temporais
         "day_of_week", "hour_of_day", "month", "is_weekend",
     ]
