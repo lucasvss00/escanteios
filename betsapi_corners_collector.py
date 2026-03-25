@@ -132,6 +132,14 @@ class BetsAPIClient:
         """Odds pré-jogo Bet365. Parâmetro FI = fixture/event ID."""
         return self._get("/v3/bet365/prematch", {"FI": event_id})
 
+    def get_inplay_odds(self, event_id: str) -> dict:
+        """Odds ao vivo Bet365 para um evento."""
+        return self._get("/v1/bet365/inplay", {"FI": event_id})
+
+    def get_h2h(self, event_id: str) -> dict:
+        """Confrontos diretos (H2H) entre os dois times do evento."""
+        return self._get("/v1/h2h", {"event_id": event_id})
+
 
 # ---------------------------------------------------------------------------
 # Parsers de resposta

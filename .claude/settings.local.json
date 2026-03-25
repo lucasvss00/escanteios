@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh auth:*)",
+      "Bash(python3 -c \"import sys,json; json.load\\(sys.stdin\\); print\\(''''JSON válido''''\\)\")",
+      "Bash(node -e \"JSON.parse\\(require\\(''''fs''''\\).readFileSync\\(''''.claude/settings.json'''',''''utf8''''\\)\\); console.log\\(''''JSON válido''''\\)\")"
+    ]
+  }
+}
