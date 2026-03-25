@@ -176,9 +176,47 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
     return pd.DataFrame(result_rows)
 
 
+def build_league_avg_corners(df_pano: pd.DataFrame) -> dict[str, float | None]:
+    """
+    Para cada jogo, calcula a média histórica de corners_total da liga (league_id)
+    com base exclusivamente nos jogos ANTERIORES (sem data leaking).
+    Retorna dict {event_id: avg_corners_total_da_liga}.
+    """
+    if "league_id" not in df_pano.columns or "corners_total" not in df_pano.columns:
+        return {}
+
+    df = df_pano.copy()
+    df["kickoff_dt_parsed"] = pd.to_datetime(df.get("kickoff_dt"), errors="coerce")
+    df = df.sort_values("kickoff_dt_parsed").reset_index(drop=True)
+
+    result: dict[str, float | None] = {}
+    league_history: dict[str, list[float]] = {}
+
+    for _, row in df.iterrows():
+        event_id = row["event_id"]
+        league_id = str(row.get("league_id", ""))
+        ct = row.get("corners_total")
+
+        # Calcula com base nos jogos ANTERIORES desta liga
+        if league_id and league_id in league_history:
+            vals = league_history[league_id]
+            result[event_id] = round(sum(vals) / len(vals), 2)
+        else:
+            result[event_id] = None
+
+        # Atualiza APÓS calcular (sem data leaking)
+        if league_id and ct is not None:
+            league_history.setdefault(league_id, []).append(float(ct))
+
+    return result
+
+
 print("\nCalculando histórico dos times (rolling window=%d)..." % ROLLING_WINDOW)
 df_team_hist = build_team_history(df_pano)
 print(f"Histórico calculado para {len(df_team_hist):,} jogos")
+
+print("Calculando média histórica de escanteios por liga...")
+league_avg = build_league_avg_corners(df_pano)
 
 
 # %%
