@@ -296,13 +296,18 @@ def build_panorama_row(event_id: str, meta: dict, event_view: dict,
         return h, a
 
     corners_h, corners_a = s("corners")
+    throw_ins_h, throw_ins_a = s("throw_ins")
+    tackles_h, tackles_a = s("tackles")
+    ball_safe_h, ball_safe_a = s("ball_safe")
 
     row = {
         "event_id":         event_id,
         "league_id":        meta["league_id"],
         "league_name":      meta["league_name"],
         "home_team":        meta["home_team"],
+        "home_id":          meta.get("home_id", ""),
         "away_team":        meta["away_team"],
+        "away_id":          meta.get("away_id", ""),
         "kickoff_dt":       meta["kickoff_dt"],
         # Placar final
         "final_score_home": final_h,
