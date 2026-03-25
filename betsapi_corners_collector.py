@@ -772,8 +772,14 @@ def run_live(
                 snapshot_rows = parse_stats_trend(raw_trend, event_id, meta)
 
                 if snapshot_rows:
-                    # Salva apenas o snapshot do minuto mais recente
-                    saver.add_snapshots([snapshot_rows[-1]])
+                    latest = snapshot_rows[-1].copy()
+
+                    # Odds ao vivo de escanteios
+                    inplay_odds_resp = client.get_inplay_odds(event_id)
+                    time.sleep(REQUEST_DELAY)
+                    latest.update(parse_inplay_corner_odds(inplay_odds_resp))
+
+                    saver.add_snapshots([latest])
 
             # Detecta jogos que saíram do ao vivo (terminaram)
             finished = set(active_events.keys()) - live_ids
@@ -791,6 +797,16 @@ def run_live(
                 view_resp = client.get_event_view(event_id)
                 time.sleep(REQUEST_DELAY)
                 panorama_row = build_panorama_row(event_id, meta, view_resp, all_snapshots)
+
+                # Odds pré-jogo + H2H para o panorama de jogos finalizados ao vivo
+                odds_resp = client.get_prematch_odds(event_id)
+                time.sleep(REQUEST_DELAY)
+                panorama_row.update(parse_prematch_odds(odds_resp))
+
+                h2h_resp = client.get_h2h(event_id)
+                time.sleep(REQUEST_DELAY)
+                panorama_row.update(parse_h2h_corners(h2h_resp))
+
                 saver.add_panorama(panorama_row)
 
             saver.flush()
