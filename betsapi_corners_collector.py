@@ -501,6 +501,92 @@ def parse_prematch_odds(odds_resp: dict) -> dict:
     return result
 
 
+def parse_inplay_corner_odds(odds_resp: dict) -> dict:
+    """
+    Extrai odds ao vivo de escanteios da resposta /v1/bet365/inplay.
+
+    Retorna a linha e odds O/U de escanteios ao vivo (None se indisponíveis).
+    """
+    result = {
+        "live_corners_line":       None,
+        "live_corners_over_odds":  None,
+        "live_corners_under_odds": None,
+    }
+    try:
+        results = odds_resp.get("results", []) or []
+        for market in results:
+            market_name = str(market.get("name", "")).lower()
+            if "corner" not in market_name:
+                continue
+            if "over" in market_name or "total" in market_name:
+                for entry in (market.get("odds", []) or []):
+                    name = str(entry.get("name", "")).lower()
+                    header = entry.get("header")
+                    odds_v = entry.get("odds")
+                    if name == "over" and odds_v is not None:
+                        result["live_corners_over_odds"] = float(odds_v)
+                        result["live_corners_line"] = float(header) if header else None
+                    elif name == "under" and odds_v is not None:
+                        result["live_corners_under_odds"] = float(odds_v)
+                if result["live_corners_line"] is not None:
+                    break
+    except (IndexError, AttributeError, TypeError, KeyError, ValueError):
+        pass
+    return result
+
+
+def parse_h2h_corners(h2h_resp: dict) -> dict:
+    """
+    Extrai estatísticas de escanteios dos confrontos diretos (H2H).
+
+    Analisa os últimos jogos entre os dois times e calcula médias
+    de escanteios. Retorna dict com métricas H2H.
+    """
+    result = {
+        "h2h_total_games":         0,
+        "h2h_avg_corners_total":   None,
+        "h2h_avg_corners_home":    None,
+        "h2h_avg_corners_away":    None,
+        "h2h_avg_goals_total":     None,
+    }
+    try:
+        events = h2h_resp.get("results", {}).get("h2h", []) or []
+        if not events:
+            return result
+
+        corner_totals = []
+        corner_homes  = []
+        corner_aways  = []
+        goal_totals   = []
+
+        for ev in events:
+            stats = ev.get("stats", {}) or {}
+            corners_str = stats.get("corners")
+            if corners_str:
+                ch, ca = parse_stat_value(corners_str)
+                if ch is not None and ca is not None:
+                    corner_totals.append(ch + ca)
+                    corner_homes.append(ch)
+                    corner_aways.append(ca)
+
+            ss = ev.get("ss", "")
+            gh, ga = parse_score(ss)
+            if gh is not None and ga is not None:
+                goal_totals.append(gh + ga)
+
+        result["h2h_total_games"] = len(events)
+        if corner_totals:
+            result["h2h_avg_corners_total"] = round(sum(corner_totals) / len(corner_totals), 2)
+            result["h2h_avg_corners_home"]  = round(sum(corner_homes)  / len(corner_homes),  2)
+            result["h2h_avg_corners_away"]  = round(sum(corner_aways)  / len(corner_aways),  2)
+        if goal_totals:
+            result["h2h_avg_goals_total"] = round(sum(goal_totals) / len(goal_totals), 2)
+
+    except (AttributeError, TypeError, KeyError, ValueError):
+        pass
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Salvamento incremental
 # ---------------------------------------------------------------------------
