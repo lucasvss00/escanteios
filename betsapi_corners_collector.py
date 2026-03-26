@@ -166,12 +166,15 @@ class BetsAPIClient:
     # Endpoints de eventos
     # ------------------------------------------------------------------
 
-    def get_ended_events(self, day: str, page: int = 1, league_id: Optional[int] = None) -> dict:
+    def get_ended_events(self, day: str, page: int = 1, league_id: Optional[int] = None, skip_esports: bool = True) -> dict:
         """
         Jogos finalizados de um dia específico.
         day: formato YYYYMMDD
+        skip_esports: pula ligas de esports (padrão: True)
         """
         params = {"sport_id": SPORT_ID, "day": day, "page": page}
+        if skip_esports:
+            params["skip_esports"] = 1
         if league_id:
             params["league_id"] = league_id
         return self._get("/v3/events/ended", params)
