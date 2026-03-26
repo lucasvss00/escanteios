@@ -1148,6 +1148,10 @@ def main():
             else:
                 end_day   = args.end   or (today - timedelta(days=1)).strftime("%Y%m%d")
                 start_day = args.start or (today - timedelta(days=7)).strftime("%Y%m%d")
+            # Novo job sem --resume: apaga checkpoint antigo automaticamente
+            if checkpoint.exists():
+                log.info("Novo job iniciado — checkpoint anterior removido.")
+                checkpoint.clear()
 
         run_historico(
             client=client,
