@@ -93,6 +93,7 @@ class BetsAPIClient:
         self.auto_wait    = auto_wait      # pausa automática ao atingir o limite
         self.request_count = 0
         self.window_start  = datetime.now(UTC)
+        self._lock         = threading.Lock()  # protege request_count e window_start
 
     @property
     def requests_remaining(self) -> int:
