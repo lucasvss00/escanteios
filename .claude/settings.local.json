@@ -35,7 +35,11 @@
       "Bash(conda run -n Betsapi python -c \":*)",
       "Bash(C:UsersLucasminiconda3envsBetsapipython.exe -c \":*)",
       "Bash(cmd /c \"C:\\\\Users\\\\Lucas\\\\miniconda3\\\\envs\\\\Betsapi\\\\python.exe -c \"\"import pandas as pd; df = pd.read_csv\\(r''C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\dados_escanteios\\\\panorama_jogos.csv''\\); d15 = df[df[''kickoff_dt''].str.startswith\\(''2026-03-15'', na=False\\)]; print\\(''Total dia 15:'', len\\(d15\\)\\); print\\(''corners preenchido:'', d15[''corners_total''].notna\\(\\).sum\\(\\)\\); print\\(''corners NaN:'', d15[''corners_total''].isna\\(\\).sum\\(\\)\\); d15p2 = d15.iloc[50:]; print\\(''Jogos 51+:'', len\\(d15p2\\)\\); print\\(''corners p2 preench:'', d15p2[''corners_total''].notna\\(\\).sum\\(\\)\\)\"\"\")",
-      "Bash(cmd /c \"C:\\\\Users\\\\Lucas\\\\miniconda3\\\\envs\\\\Betsapi\\\\python.exe C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analisa_csv.py\")"
+      "Bash(cmd /c \"C:\\\\Users\\\\Lucas\\\\miniconda3\\\\envs\\\\Betsapi\\\\python.exe C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analisa_csv.py\")",
+      "Bash(cmd /c \"C:\\\\Users\\\\Lucas\\\\miniconda3\\\\envs\\\\Betsapi\\\\python.exe C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analisa_csv.py 2>&1\")",
+      "Bash(cmd /c \"C:\\\\Users\\\\Lucas\\\\miniconda3\\\\envs\\\\Betsapi\\\\python.exe -V\")",
+      "Bash(cmd /c \"C:\\\\Users\\\\Lucas\\\\miniconda3\\\\envs\\\\Betsapi\\\\python.exe C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analisa_csv.py > C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analise_output.txt 2>&1 && type C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analise_output.txt\")",
+      "Bash(cmd /c type C:UsersLucasDesktopFIFAescanteiosanalise_output.txt)"
     ]
   }
 }
