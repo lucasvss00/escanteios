@@ -270,72 +270,101 @@ def extract_event_metadata(event: dict) -> dict:
     }
 
 
-def parse_stats_trend(raw_trend: list, event_id: str, meta: dict,
+def parse_stats_trend(raw_trend, event_id: str, meta: dict,
                       source: str = "historico") -> list[dict]:
     """
-    Converte a lista de snapshots do stats_trend em linhas de DataFrame.
+    Converte a resposta do stats_trend em linhas de DataFrame (1 por minuto).
 
-    Cada item da lista `raw_trend` representa um minuto do jogo e contém
-    pares de campos [home_val, away_val] por estatística.
+    Formato real da API: dict com nome da stat → {"home": [...], "away": [...]}
+    Cada entry: {"time_str": "minuto", "val": "valor", "created_at": "..."}
 
-    Campos mapeados (baseado na documentação BetsAPI):
-      0  - corners
-      1  - attacks
-      2  - dangerous_attacks
-      3  - on_target (chutes a gol)
-      4  - off_target (chutes fora)
-      5  - possession %
-      6  - yellow_cards
-      7  - red_cards
-      8  - free_kicks / faltas
+    As séries são esparsas (só registram mudanças), então aplicamos
+    forward-fill para gerar uma linha por minuto do jogo.
     """
+    # Mapeamento: nome da stat na API → (coluna_home, coluna_away)
     FIELD_MAP = {
-        0: ("corners_home",           "corners_away"),
-        1: ("attacks_home",           "attacks_away"),
-        2: ("dangerous_attacks_home", "dangerous_attacks_away"),
-        3: ("shots_on_target_home",   "shots_on_target_away"),
-        4: ("shots_off_target_home",  "shots_off_target_away"),
-        5: ("possession_home",        "possession_away"),
-        6: ("yellow_cards_home",      "yellow_cards_away"),
-        7: ("red_cards_home",         "red_cards_away"),
-        8: ("fouls_home",             "fouls_away"),
-        9: ("saves_home",             "saves_away"),
-        10: ("offsides_home",         "offsides_away"),
-        11: ("goal_kicks_home",       "goal_kicks_away"),
+        "corners":           ("corners_home",           "corners_away"),
+        "attacks":           ("attacks_home",            "attacks_away"),
+        "dangerous_attacks": ("dangerous_attacks_home",  "dangerous_attacks_away"),
+        "on_target":         ("shots_on_target_home",    "shots_on_target_away"),
+        "off_target":        ("shots_off_target_home",   "shots_off_target_away"),
+        "possession":        ("possession_home",         "possession_away"),
+        "yellowcards":       ("yellow_cards_home",       "yellow_cards_away"),
+        "redcards":          ("red_cards_home",          "red_cards_away"),
+        "fouls":             ("fouls_home",              "fouls_away"),
+        "saves":             ("saves_home",              "saves_away"),
+        "offsides":          ("offsides_home",           "offsides_away"),
+        "goal_kicks":        ("goal_kicks_home",         "goal_kicks_away"),
     }
 
     rows = []
     if not raw_trend:
         return rows
 
-    for minute_idx, snapshot in enumerate(raw_trend):
-        row = {
-            "event_id":         event_id,
-            "minute":           minute_idx + 1,
+    if not isinstance(raw_trend, dict):
+        return rows  # formato inesperado
+
+    # Constrói séries esparsas {minuto: valor} para cada stat/lado
+    stat_series: dict[str, dict] = {}
+    max_minute = 0
+
+    for stat_name in FIELD_MAP:
+        if stat_name not in raw_trend:
+            continue
+        stat_data = raw_trend[stat_name]
+        home_pts: dict[int, Optional[int]] = {}
+        away_pts: dict[int, Optional[int]] = {}
+
+        for entry in (stat_data.get("home") or []):
+            try:
+                m = int(entry["time_str"])
+                home_pts[m] = _to_int(entry.get("val"))
+                max_minute = max(max_minute, m)
+            except (KeyError, ValueError, TypeError):
+                pass
+
+        for entry in (stat_data.get("away") or []):
+            try:
+                m = int(entry["time_str"])
+                away_pts[m] = _to_int(entry.get("val"))
+                max_minute = max(max_minute, m)
+            except (KeyError, ValueError, TypeError):
+                pass
+
+        stat_series[stat_name] = {"home": home_pts, "away": away_pts}
+
+    if max_minute == 0:
+        return rows
+
+    # Forward-fill: percorre minuto a minuto e mantém último valor conhecido
+    last_home: dict[str, Optional[int]] = {s: None for s in FIELD_MAP}
+    last_away: dict[str, Optional[int]] = {s: None for s in FIELD_MAP}
+    collected_ts = datetime.utcnow().isoformat()
+
+    for minute in range(0, max_minute + 1):
+        # Atualiza valores se há entrada neste minuto
+        for stat_name, series in stat_series.items():
+            if minute in series["home"]:
+                last_home[stat_name] = series["home"][minute]
+            if minute in series["away"]:
+                last_away[stat_name] = series["away"][minute]
+
+        if minute == 0:
+            continue  # minuto 0 é inicialização, não gera linha
+
+        row: dict = {
+            "event_id":          event_id,
+            "minute":            minute,
             "collection_source": source,
-            "collected_at":     datetime.utcnow().isoformat(),
+            "collected_at":      collected_ts,
             **{k: v for k, v in meta.items()},
         }
-        # snapshot pode ser lista de listas ou dict — BetsAPI retorna lista
-        stats_list = snapshot if isinstance(snapshot, list) else []
-        for field_idx, (home_col, away_col) in FIELD_MAP.items():
-            if field_idx < len(stats_list):
-                entry = stats_list[field_idx]
-                if isinstance(entry, list) and len(entry) >= 2:
-                    row[home_col] = _to_int(entry[0])
-                    row[away_col] = _to_int(entry[1])
-                elif isinstance(entry, str) and ":" in entry:
-                    h, a = parse_stat_value(entry)
-                    row[home_col] = h
-                    row[away_col] = a
-                else:
-                    row[home_col] = None
-                    row[away_col] = None
-            else:
-                row[home_col] = None
-                row[away_col] = None
+        for stat_name, (home_col, away_col) in FIELD_MAP.items():
+            row[home_col] = last_home[stat_name]
+            row[away_col] = last_away[stat_name]
 
         rows.append(row)
+
     return rows
 
 
