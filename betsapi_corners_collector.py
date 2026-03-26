@@ -70,15 +70,50 @@ REQUEST_DELAY = 1.0   # delay entre requests — 3600 req/hora = 1 req/s (plano 
 
 
 # ---------------------------------------------------------------------------
+# Exceção de rate limit
+# ---------------------------------------------------------------------------
+
+class RateLimitReached(Exception):
+    """Disparada quando o contador de requests atinge o limite configurado."""
+    pass
+
+
+# ---------------------------------------------------------------------------
 # Cliente HTTP
 # ---------------------------------------------------------------------------
 class BetsAPIClient:
-    """Wrapper simples para a BetsAPI com retry automático."""
+    """Wrapper simples para a BetsAPI com retry automático e controle de rate limit."""
 
-    def __init__(self, token: str):
+    def __init__(self, token: str, max_requests: int = 3500):
         self.token = token
         self.session = requests.Session()
         self.session.headers.update({"X-API-TOKEN": token})
+        self.max_requests  = max_requests   # limite por janela de 1h
+        self.request_count = 0
+        self.window_start  = datetime.utcnow()
+
+    @property
+    def requests_remaining(self) -> int:
+        return max(0, self.max_requests - self.request_count)
+
+    def _reset_window_if_needed(self):
+        elapsed = (datetime.utcnow() - self.window_start).total_seconds()
+        if elapsed >= 3600:
+            log.info("Nova janela de rate limit iniciada (anterior: %d requests em %.0fs).",
+                     self.request_count, elapsed)
+            self.request_count = 0
+            self.window_start  = datetime.utcnow()
+
+    def _check_rate_limit(self):
+        self._reset_window_if_needed()
+        if self.request_count >= self.max_requests:
+            elapsed  = (datetime.utcnow() - self.window_start).total_seconds()
+            wait_sec = max(0, int(3600 - elapsed))
+            raise RateLimitReached(
+                f"Limite de {self.max_requests} requests atingido "
+                f"(janela atual: {elapsed:.0f}s). "
+                f"Próxima janela em ~{wait_sec}s."
+            )
 
     def _get(self, endpoint: str, params: dict = None) -> dict:
         url = f"{BASE_URL}{endpoint}"
