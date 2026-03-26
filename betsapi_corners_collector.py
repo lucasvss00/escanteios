@@ -243,7 +243,8 @@ def extract_event_metadata(event: dict) -> dict:
     }
 
 
-def parse_stats_trend(raw_trend: list, event_id: str, meta: dict) -> list[dict]:
+def parse_stats_trend(raw_trend: list, event_id: str, meta: dict,
+                      source: str = "historico") -> list[dict]:
     """
     Converte a lista de snapshots do stats_trend em linhas de DataFrame.
 
