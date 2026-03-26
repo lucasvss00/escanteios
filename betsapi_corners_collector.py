@@ -701,13 +701,11 @@ def _process_one_event(
     Retorna (event_id, meta, snapshot_rows, panorama_row).
     Pode lançar RateLimitReached se auto_wait=False.
     """
-    trend_resp, view_resp, odds_resp = _fetch_event_data(client, event_id)
+    trend_resp, view_resp = _fetch_event_data(client, event_id)
     raw_trend     = trend_resp.get("results") or {}
     snapshot_rows = parse_stats_trend(raw_trend, event_id, meta, source="historico")
     panorama_row  = build_panorama_row(event_id, meta, view_resp, snapshot_rows,
                                        source="historico")
-    corner_odds   = parse_prematch_odds(odds_resp)
-    panorama_row.update(corner_odds)
     return event_id, meta, snapshot_rows, panorama_row
 
 
