@@ -465,12 +465,16 @@ def build_panorama_row(event_id: str, meta: dict, event_view: dict,
         "corners_home_ht":   _safe_last_filtered(snapshot_rows, "corners_home",  lambda m: m <= 45),
         "corners_away_ht":   _safe_last_filtered(snapshot_rows, "corners_away",  lambda m: m <= 45),
         "corners_ht_total":  (_safe_last_filtered(snapshot_rows, "corners_home", lambda m: m <= 45) or 0)
-                             + (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0),
-        "corners_home_2h":   (corners_h or 0) - (_safe_last_filtered(snapshot_rows, "corners_home", lambda m: m <= 45) or 0),
-        "corners_away_2h":   (corners_a or 0) - (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0),
+                             + (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0)
+                             if snapshot_rows else None,
+        "corners_home_2h":   (corners_h or 0) - (_safe_last_filtered(snapshot_rows, "corners_home", lambda m: m <= 45) or 0)
+                             if snapshot_rows else None,
+        "corners_away_2h":   (corners_a or 0) - (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0)
+                             if snapshot_rows else None,
         "corners_2h_total":  (corners_h or 0) + (corners_a or 0)
                              - (_safe_last_filtered(snapshot_rows, "corners_home", lambda m: m <= 45) or 0)
-                             - (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0),
+                             - (_safe_last_filtered(snapshot_rows, "corners_away", lambda m: m <= 45) or 0)
+                             if snapshot_rows else None,
         # Minuto do primeiro escanteio (útil para ML ao vivo)
         "first_corner_minute":            _first_corner_minute(snapshot_rows),
         "total_snapshot_minutes":         len(snapshot_rows),
