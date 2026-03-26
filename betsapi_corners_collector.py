@@ -946,7 +946,8 @@ def run_historico(
     if resume_day:
         print(f"  Retomando : a partir de {resume_day}  ({days_pending} dias restantes)")
     print(f"  Limite    : {client.max_requests} req/hora  |  "
-          f"Auto-wait: {'ON ✓' if client.auto_wait else 'OFF'}")
+          f"Auto-wait: {'ON ✓' if client.auto_wait else 'OFF'}  |  "
+          f"Workers: {workers} {'(paralelo)' if workers > 1 else '(sequencial)'}")
     if collected_ids:
         print(f"  No Parquet: {len(collected_ids):,} jogos já coletados  →  serão pulados")
     if league_id:
