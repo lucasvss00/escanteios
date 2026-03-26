@@ -791,21 +791,6 @@ def _fmt_time(seconds: int) -> str:
     return f"{seconds}s"
 
 
-def _is_esports(league_name: str) -> bool:
-    """Detecta se uma liga é esports/virtual/fantasy baseado no nome."""
-    patterns = [
-        "esports",
-        "virtual",
-        "fantasy",
-        "simulated",
-        "e-sports",
-        "cyber",
-        "online",
-    ]
-    name_lower = str(league_name).lower()
-    return any(pattern in name_lower for pattern in patterns)
-
-
 def run_historico(
     client: BetsAPIClient,
     saver: DataSaver,
