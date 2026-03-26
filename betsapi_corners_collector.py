@@ -1009,68 +1009,42 @@ def run_historico(
                 page_new     = 0
                 page_skipped = 0
 
+                # Fase 1: filtra eventos desta página (serial, sem requests)
+                to_process: list[tuple[str, dict]] = []
                 for event in events:
                     event_id = str(event.get("id", ""))
                     if not event_id:
                         continue
-
-                    # Pula jogos não encerrados (time_status != "3")
-                    # Evita coletar dados parciais de jogos ainda em andamento
-                    # O jogo aparecerá novamente quando encerrado
                     time_status = str(event.get("time_status", ""))
-                    if time_status != "3":
+                    if time_status != "3" or event_id in collected_ids:
                         page_skipped += 1
                         day_skipped  += 1
                         session_skip += 1
                         continue
+                    to_process.append((event_id, extract_event_metadata(event)))
 
-                    # Pula jogos já coletados — zero requests extras
-                    if event_id in collected_ids:
-                        page_skipped += 1
-                        day_skipped  += 1
-                        session_skip += 1
-                        continue
+                # Fase 2: coleta dados (paralelo quando workers > 1)
+                try:
+                    processed = _collect_events(client, to_process, workers)
+                except RateLimitReached as exc:
+                    log.warning("Rate limit: %s", exc)
+                    _save_checkpoint(day)
+                    saver.flush()
+                    return
 
-                    meta = extract_event_metadata(event)
-                    home = meta.get("home_team", "?")
-                    away = meta.get("away_team", "?")
-
-                    try:
-                        # Stats trend
-                        trend_resp = client.get_stats_trend(event_id)
-                        time.sleep(REQUEST_DELAY)
-                        raw_trend     = trend_resp.get("results", []) or []
-                        snapshot_rows = parse_stats_trend(raw_trend, event_id, meta,
-                                                          source="historico")
-
-                        # Event view
-                        view_resp   = client.get_event_view(event_id)
-                        time.sleep(REQUEST_DELAY)
-                        panorama_row = build_panorama_row(event_id, meta, view_resp,
-                                                          snapshot_rows, source="historico")
-
-                    except RateLimitReached as exc:
-                        # Só ocorre se auto_wait=False
-                        log.warning("Rate limit ao processar %s: %s", event_id, exc)
-                        _save_checkpoint(day)
-                        saver.flush()
-                        return
-
+                # Fase 3: atualiza estado (sempre serial)
+                for event_id, snapshot_rows, panorama_row in processed:
                     saver.add_snapshots(snapshot_rows)
                     saver.add_panorama(panorama_row)
-
-                    # time_status == "3" já confirmou que o jogo encerrou
                     collected_ids.add(event_id)
                     total_events += 1
-
-                    session_new   += 1
-                    page_new      += 1
-                    day_new       += 1
+                    session_new  += 1
+                    page_new     += 1
+                    day_new      += 1
 
                     if total_events % flush_every == 0:
                         saver.flush()
 
-                    # Limite de jogos para testes
                     if max_games and session_new >= max_games:
                         print(f"\n  🏁 --max-games {max_games} atingido — encerrando.")
                         saver.flush()
