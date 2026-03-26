@@ -1035,6 +1035,14 @@ def parse_args():
         "--no-csv", action="store_true",
         help="Não gerar cópias CSV (apenas Parquet)"
     )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Retoma coleta histórica de onde parou (requer checkpoint existente)"
+    )
+    parser.add_argument(
+        "--max-requests", type=int, default=3500,
+        help="Limite de requests por hora (padrão: 3500, plano Soccer API tem 3600)"
+    )
     return parser.parse_args()
 
 
