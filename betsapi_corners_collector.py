@@ -1123,21 +1123,35 @@ def run_live(
                     latest = snapshot_rows[-1].copy()
                     saver.add_snapshots([latest])
 
-            # Detecta jogos que saíram do ao vivo (terminaram)
-            finished = set(active_events.keys()) - live_ids
-            for event_id in finished:
-                meta = active_events.pop(event_id)
-                log.info("Jogo finalizado detectado: %s vs %s (id=%s)",
-                         meta["home_team"], meta["away_team"], event_id)
+            # Detecta jogos que saíram do ao vivo (possivelmente terminaram)
+            missing = set(active_events.keys()) - live_ids
+            for event_id in missing:
+                meta = active_events[event_id]
 
-                # Coleta panorama final
-                trend_resp = client.get_stats_trend(event_id)
-                time.sleep(REQUEST_DELAY)
-                raw_trend = trend_resp.get("results", []) or []
-                all_snapshots = parse_stats_trend(raw_trend, event_id, meta, source="live")
-
+                # Verifica se realmente encerrou antes de salvar panorama final
                 view_resp = client.get_event_view(event_id)
                 time.sleep(REQUEST_DELAY)
+
+                event_result = (view_resp.get("results", [{}]) or [{}])[0]
+                time_status = str(event_result.get("time_status", ""))
+
+                if time_status != "3":
+                    # Não confirmado encerrado — pode ser lag da API, intervalo prolongado, etc.
+                    # Mantém em active_events e tenta novamente no próximo ciclo
+                    log.info("Jogo %s saiu do inplay mas time_status=%s — aguardando próximo ciclo.",
+                             event_id, time_status)
+                    continue
+
+                # Confirmado encerrado — coleta panorama final
+                active_events.pop(event_id)
+                log.info("Jogo encerrado confirmado: %s vs %s (id=%s)",
+                         meta["home_team"], meta["away_team"], event_id)
+
+                trend_resp = client.get_stats_trend(event_id)
+                time.sleep(REQUEST_DELAY)
+                raw_trend = trend_resp.get("results", {}) or {}
+                all_snapshots = parse_stats_trend(raw_trend, event_id, meta, source="live")
+
                 panorama_row = build_panorama_row(event_id, meta, view_resp, all_snapshots,
                                                   source="live")
 
