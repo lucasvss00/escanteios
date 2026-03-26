@@ -903,8 +903,10 @@ def run_historico(
                     return
 
                 events = resp.get("results", []) or []
-                pager  = resp.get("pager", {}) or {}
-                total_pages = int(pager.get("total_pages", 1))
+                pager    = resp.get("pager", {}) or {}
+                per_page = int(pager.get("per_page", 50) or 50)
+                total    = int(pager.get("total", 0)  or 0)
+                total_pages = max(1, -(-total // per_page))  # ceil sem importar math
 
                 if not events:
                     print(f"│  Pág {page}: sem jogos")
