@@ -112,35 +112,43 @@ class BetsAPIClient:
             self.window_start  = datetime.now(UTC)
 
     def _check_rate_limit(self):
-        self._reset_window_if_needed()
-        if self.request_count < self.max_requests:
-            return  # dentro do limite, ok
+        """
+        Thread-safe: verifica o rate limit e reserva atomicamente um slot de request.
+        Se o limite foi atingido e auto_wait=True, aguarda fora do lock e re-tenta.
+        Se auto_wait=False, lança RateLimitReached.
+        """
+        while True:
+            with self._lock:
+                self._reset_window_if_needed()
+                if self.request_count < self.max_requests:
+                    self.request_count += 1  # reserva o slot atomicamente
+                    return
 
-        if self.auto_wait:
-            # Calcula tempo restante + 15s de margem
-            wait_sec = self.seconds_until_reset() + 15
+                if not self.auto_wait:
+                    elapsed  = (datetime.now(UTC) - self.window_start).total_seconds()
+                    wait_sec = self.seconds_until_reset()
+                    raise RateLimitReached(
+                        f"Limite de {self.max_requests} requests atingido "
+                        f"(janela: {elapsed:.0f}s). "
+                        f"Próxima janela em ~{wait_sec}s. Use --resume para retomar."
+                    )
+                wait_sec = self.seconds_until_reset() + 15
+
+            # Fora do lock: exibe aviso e aguarda (outros threads podem continuar verificando)
             print(f"\n{'='*60}")
             print(f"  ⏸  RATE LIMIT ATINGIDO ({self.request_count}/{self.max_requests} requests)")
             print(f"  Aguardando {wait_sec // 60} min {wait_sec % 60} s para janela resetar...")
             print(f"  Pressione Ctrl+C para parar e salvar checkpoint.")
             print(f"{'='*60}")
-            for i in range(1, wait_sec + 1):
+            slept = 0
+            while slept < wait_sec:
                 time.sleep(1)
-                if i % 60 == 0:   # atualiza a cada 1 minuto
-                    remaining = wait_sec - i
+                slept += 1
+                if slept % 60 == 0 and slept < wait_sec:
+                    remaining = wait_sec - slept
                     print(f"  ⏳ Aguardando... {remaining // 60} min {remaining % 60} s restantes")
-            # Reseta janela e continua normalmente
-            self.request_count = 0
-            self.window_start  = datetime.now(UTC)
-            print(f"\n  ▶  Janela resetada — retomando coleta...\n")
-        else:
-            elapsed  = (datetime.now(UTC) - self.window_start).total_seconds()
-            wait_sec = self.seconds_until_reset()
-            raise RateLimitReached(
-                f"Limite de {self.max_requests} requests atingido "
-                f"(janela: {elapsed:.0f}s). "
-                f"Próxima janela em ~{wait_sec}s. Use --resume para retomar."
-            )
+            print(f"\n  ▶  Janela deve ter resetado — retomando coleta...\n")
+            # Volta ao topo do loop para verificar sob o lock
 
     def _get(self, endpoint: str, params: dict = None) -> dict:
         self._check_rate_limit()   # lança RateLimitReached se necessário
