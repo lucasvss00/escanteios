@@ -780,6 +780,15 @@ class DataSaver:
 # Modo HISTÓRICO
 # ---------------------------------------------------------------------------
 
+def _fmt_time(seconds: int) -> str:
+    """Formata segundos em string legível: '1h 23m' ou '45m 10s'."""
+    if seconds >= 3600:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+    if seconds >= 60:
+        return f"{seconds // 60}m {seconds % 60}s"
+    return f"{seconds}s"
+
+
 def run_historico(
     client: BetsAPIClient,
     saver: DataSaver,
@@ -796,14 +805,12 @@ def run_historico(
 
     start_day / end_day: formato YYYYMMDD
 
-    Suporte a checkpoint e retomada inteligente:
-      - Se `resume=True`, carrega event_ids já coletados do Parquet existente.
-        Ao repassar as páginas, jogos já coletados são pulados (0 requests extras).
-      - Ao atingir o rate limit com auto_wait=True (padrão), pausa e retoma
-        automaticamente sem sair do programa.
-      - Ao atingir o rate limit com auto_wait=False, salva checkpoint e encerra.
-      - Ctrl+C salva checkpoint e encerra. Use --resume para continuar.
-      - Ao concluir tudo, remove o checkpoint automaticamente.
+    Comportamentos:
+      - Novo job       : apaga checkpoint antigo, carrega collected_ids do Parquet
+      - --resume       : retoma do dia salvo no checkpoint, skipa jogos já coletados
+      - auto_wait=True : pausa ao atingir rate limit, retoma automaticamente
+      - auto_wait=False: salva checkpoint e encerra ao atingir rate limit
+      - Ctrl+C         : salva checkpoint do DIA ATUAL e encerra
     """
     start = datetime.strptime(start_day, "%Y%m%d")
     end   = datetime.strptime(end_day,   "%Y%m%d")
@@ -811,34 +818,44 @@ def run_historico(
              for i in range((end - start).days + 1)]
 
     # --- Carrega checkpoint se solicitado ---
-    resume_day   = None
-    total_events = 0
+    resume_day = None
     if resume and checkpoint and checkpoint.exists():
-        ckpt_data    = checkpoint.load()
-        resume_day   = ckpt_data.get("current_day")
-        total_events = ckpt_data.get("total_events", 0)
-        log.info("Checkpoint encontrado: retomando a partir do dia %s (%d jogos já coletados).",
-                 resume_day, total_events)
+        ckpt_data  = checkpoint.load()
+        resume_day = ckpt_data.get("current_day")
 
-    # --- Carrega event_ids já coletados para skip inteligente ---
-    # Sempre ativo — independente de --resume. Garante 0 requests extras
-    # para jogos já no Parquet, seja num resume ou num job novo com range maior.
+    # --- Carrega event_ids já coletados (sempre ativo) ---
     collected_ids: set[str] = set()
     pano_path = saver.out / "panorama_jogos.parquet"
     if pano_path.exists():
         try:
             df_ex = pd.read_parquet(pano_path, columns=["event_id"])
             collected_ids = set(df_ex["event_id"].astype(str))
-            if collected_ids:
-                log.info("Skip inteligente: %d jogos já no Parquet serão pulados (0 requests).",
-                         len(collected_ids))
         except Exception as exc:
-            log.warning("Erro ao carregar IDs existentes: %s — nenhum jogo será pulado.", exc)
+            log.warning("Erro ao carregar IDs existentes: %s", exc)
 
-    log.info("Coleta histórica: %s → %s (%d dias) | limite=%d req/hora | auto_wait=%s",
-             start_day, end_day, len(days), client.max_requests, client.auto_wait)
+    # total_events reflete o estado real (jogos já no Parquet + novos desta sessão)
+    total_events   = len(collected_ids)
+    session_new    = 0   # novos coletados nesta sessão
+    session_skip   = 0   # pulados nesta sessão
 
-    h2h_cache: dict[tuple[str, str], dict] = {}
+    # --- Banner de início ---
+    days_pending = sum(1 for d in days if not resume_day or d >= resume_day)
+    print(f"\n{'═'*62}")
+    print(f"  BetsAPI Corner Collector  —  {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC")
+    print(f"{'─'*62}")
+    print(f"  Range     : {start_day} → {end_day}  ({len(days)} dias)")
+    if resume_day:
+        print(f"  Retomando : a partir de {resume_day}  ({days_pending} dias restantes)")
+    print(f"  Limite    : {client.max_requests} req/hora  |  "
+          f"Auto-wait: {'ON ✓' if client.auto_wait else 'OFF'}")
+    if collected_ids:
+        print(f"  No Parquet: {len(collected_ids):,} jogos já coletados  →  serão pulados")
+    if league_id:
+        print(f"  Liga      : {league_id}")
+    print(f"{'═'*62}\n")
+
+    h2h_cache:  dict[tuple[str, str], dict] = {}
+    current_day = days[0] if days else start_day  # BUG FIX: rastreia dia atual para Ctrl+C
 
     def _save_checkpoint(day: str):
         if checkpoint:
@@ -849,65 +866,86 @@ def run_historico(
                 "total_events": total_events,
                 "league_id":    league_id,
             })
-            log.info("▶ Para retomar: python betsapi_corners_collector.py "
-                     "--mode historico --resume --token SEU_TOKEN")
+            print(f"\n  💾 Checkpoint salvo — dia {day}")
+            print(f"  ▶  Para retomar: adicione --resume ao comando\n")
 
     try:
-        for day in tqdm(days, desc="Dias"):
+        for day_idx, day in enumerate(days, 1):
+            current_day = day  # BUG FIX: atualiza sempre antes de qualquer operação
+
             # Pula dias completamente anteriores ao ponto de retomada
             if resume_day and day < resume_day:
                 continue
 
-            # Sempre começa da página 1 — collected_ids garante sem desperdício
-            page = 1
-            skipped_day = 0
+            # --- Cabeçalho do dia ---
+            day_label = datetime.strptime(day, "%Y%m%d").strftime("%d/%m/%Y")
+            days_done = day_idx - (1 if not resume_day else
+                        sum(1 for d in days[:day_idx-1] if d < resume_day))
+            print(f"┌─ [{days_done:>3}/{days_pending}] {day_label} "
+                  f"{'─' * (44 - len(day_label))}")
+
+            page          = 1
+            day_new       = 0
+            day_skipped   = 0
+            day_requests  = client.request_count
+
             while True:
                 try:
                     resp = client.get_ended_events(day, page=page, league_id=league_id)
                     time.sleep(REQUEST_DELAY)
                 except RateLimitReached as exc:
-                    # auto_wait=False: salva checkpoint e encerra
-                    log.warning("Rate limit (sem auto_wait): %s", exc)
+                    log.warning("Rate limit (auto_wait=False): %s", exc)
                     _save_checkpoint(day)
                     saver.flush()
                     return
 
                 events = resp.get("results", []) or []
+                pager  = resp.get("pager", {}) or {}
+                total_pages = int(pager.get("total_pages", 1))
+
                 if not events:
+                    print(f"│  Pág {page}: sem jogos")
                     break
+
+                page_new     = 0
+                page_skipped = 0
 
                 for event in events:
                     event_id = str(event.get("id", ""))
                     if not event_id:
                         continue
 
-                    # Pula jogos já coletados — sem nenhuma chamada à API
+                    # Pula jogos já coletados — zero requests extras
                     if event_id in collected_ids:
-                        skipped_day += 1
+                        page_skipped += 1
+                        day_skipped  += 1
+                        session_skip += 1
                         continue
 
                     meta = extract_event_metadata(event)
+                    home = meta.get("home_team", "?")
+                    away = meta.get("away_team", "?")
 
                     try:
-                        # Stats trend (série por minuto)
+                        # Stats trend
                         trend_resp = client.get_stats_trend(event_id)
                         time.sleep(REQUEST_DELAY)
-                        raw_trend = trend_resp.get("results", []) or []
+                        raw_trend     = trend_resp.get("results", []) or []
                         snapshot_rows = parse_stats_trend(raw_trend, event_id, meta,
                                                           source="historico")
 
-                        # Detalhes do jogo para panorama
-                        view_resp = client.get_event_view(event_id)
+                        # Event view
+                        view_resp   = client.get_event_view(event_id)
                         time.sleep(REQUEST_DELAY)
                         panorama_row = build_panorama_row(event_id, meta, view_resp,
                                                           snapshot_rows, source="historico")
 
-                        # Odds pré-jogo (escanteios + 1x2 + gols + BTTS)
+                        # Odds pré-jogo
                         odds_resp = client.get_prematch_odds(event_id)
                         time.sleep(REQUEST_DELAY)
                         panorama_row.update(parse_prematch_odds(odds_resp))
 
-                        # H2H — com cache por par de times
+                        # H2H (com cache)
                         pair_key = (meta["home_id"], meta["away_id"])
                         if pair_key not in h2h_cache:
                             h2h_resp = client.get_h2h(event_id)
@@ -916,44 +954,70 @@ def run_historico(
                         panorama_row.update(h2h_cache[pair_key])
 
                     except RateLimitReached as exc:
-                        # Só chega aqui se auto_wait=False
-                        log.warning("Rate limit ao processar evento %s: %s", event_id, exc)
+                        # Só ocorre se auto_wait=False
+                        log.warning("Rate limit ao processar %s: %s", event_id, exc)
                         _save_checkpoint(day)
                         saver.flush()
                         return
 
                     saver.add_snapshots(snapshot_rows)
                     saver.add_panorama(panorama_row)
-                    collected_ids.add(event_id)   # marca como coletado
-                    total_events += 1
+                    collected_ids.add(event_id)
+                    total_events  += 1
+                    session_new   += 1
+                    page_new      += 1
+                    day_new       += 1
 
                     if total_events % flush_every == 0:
                         saver.flush()
-                        log.info("  Progresso: %d jogos | pulados: %d | requests: %d/%d",
-                                 total_events, skipped_day,
-                                 client.request_count, client.max_requests)
 
-                if skipped_day > 0:
-                    log.debug("Dia %s: %d jogos pulados (já coletados).", day, skipped_day)
+                # --- Status da página ---
+                req_used = client.request_count
+                req_pct  = req_used / client.max_requests * 100
+                status   = (f"│  Pág {page}/{total_pages}: "
+                            f"{len(events)} jogos  |  "
+                            f"✦ {page_new} novos  "
+                            f"✓ {page_skipped} pulados  |  "
+                            f"req: {req_used}/{client.max_requests} ({req_pct:.0f}%)")
+                print(status)
 
-                # Paginação
-                pager = resp.get("pager", {}) or {}
-                total_pages = pager.get("total_pages", 1)
-                if page >= int(total_pages):
+                if page >= total_pages:
                     break
                 page += 1
 
+            # --- Resumo do dia ---
+            day_req_used = client.request_count - day_requests
+            print(f"└─ {day_new} coletados  {day_skipped} pulados  "
+                  f"{day_req_used} requests neste dia\n")
+
+            if day_new > 0 or day_skipped == 0:
+                saver.flush()
+
     except KeyboardInterrupt:
-        log.info("Interrompido pelo usuário (Ctrl+C).")
-        _save_checkpoint(days[-1] if days else start_day)
+        print(f"\n\n  ⚠  Interrompido pelo usuário (Ctrl+C).")
+        print(f"  Dia atual: {current_day}")
+        _save_checkpoint(current_day)  # BUG FIX: usa current_day rastreado, não days[-1]
         saver.flush()
+        _print_session_summary(session_new, session_skip, total_events, client)
         return
 
     saver.flush()
     if checkpoint:
         checkpoint.clear()
-    log.info("Coleta histórica concluída. Total de jogos: %d | Requests usados: %d",
-             total_events, client.request_count)
+
+    # --- Resumo final ---
+    print(f"\n{'═'*62}")
+    print(f"  ✅ COLETA CONCLUÍDA")
+    _print_session_summary(session_new, session_skip, total_events, client)
+    print(f"{'═'*62}\n")
+
+
+def _print_session_summary(new: int, skipped: int, total: int, client: BetsAPIClient):
+    """Imprime resumo da sessão de coleta."""
+    print(f"{'─'*62}")
+    print(f"  Esta sessão : {new:>6,} novos coletados  |  {skipped:>6,} pulados")
+    print(f"  Total Parquet: {total:>6,} jogos")
+    print(f"  Requests    : {client.request_count:>6,} / {client.max_requests:,} usados")
 
 
 # ---------------------------------------------------------------------------
