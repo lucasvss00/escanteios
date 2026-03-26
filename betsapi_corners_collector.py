@@ -421,7 +421,12 @@ def build_panorama_row(event_id: str, meta: dict, event_view: dict,
         "collected_at":                   datetime.utcnow().isoformat(),
         "corners_home_total":             corners_h,
         "corners_away_total":             corners_a,
-        "corners_total":                  (corners_h or 0) + (corners_a or 0),
+        # has_stats = True se stats_trend retornou dados; distingue "0 escanteios reais"
+        # de "sem dados disponíveis" (ambos apareciam como corners_total=0 antes)
+        "has_stats":                      bool(snapshot_rows),
+        "corners_total":                  (corners_h + corners_a)
+                                          if (corners_h is not None or corners_a is not None)
+                                          else None,
         # Demais stats finais
         "possession_home_avg":            _safe_avg(snapshot_rows, "possession_home"),
         "possession_away_avg":            _safe_avg(snapshot_rows, "possession_away"),
