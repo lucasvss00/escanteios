@@ -685,11 +685,10 @@ def _fetch_event_data(
     Opção 3 — dispara as 3 chamadas de API de um evento em paralelo.
     Retorna (trend_resp, view_resp, odds_resp).
     """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         f_trend = pool.submit(client.get_stats_trend,    event_id)
         f_view  = pool.submit(client.get_event_view,     event_id)
-        f_odds  = pool.submit(client.get_prematch_odds,  event_id)
-        return f_trend.result(), f_view.result(), f_odds.result()
+        return f_trend.result(), f_view.result()
 
 
 def _process_one_event(
