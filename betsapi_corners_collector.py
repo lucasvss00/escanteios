@@ -850,7 +850,6 @@ def run_historico(
         print(f"  Liga      : {league_id}")
     print(f"{'═'*62}\n")
 
-    h2h_cache:  dict[tuple[str, str], dict] = {}
     current_day = days[0] if days else start_day  # BUG FIX: rastreia dia atual para Ctrl+C
 
     def _save_checkpoint(day: str):
