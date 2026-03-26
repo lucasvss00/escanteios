@@ -745,79 +745,151 @@ def run_historico(
     end_day: str,
     league_id: Optional[int] = None,
     flush_every: int = 50,
+    checkpoint: Optional[CheckpointManager] = None,
+    resume: bool = False,
 ):
     """
     Itera de start_day até end_day (inclusive), coleta todos os jogos
     finalizados de futebol, seus stats_trend e panorama.
 
     start_day / end_day: formato YYYYMMDD
+
+    Suporte a checkpoint:
+      - Se `resume=True` e existe checkpoint, retoma do dia/página salvo.
+      - Ao atingir o rate limit, salva checkpoint e encerra com aviso.
+      - Ao concluir tudo, remove o checkpoint automaticamente.
     """
     start = datetime.strptime(start_day, "%Y%m%d")
     end   = datetime.strptime(end_day,   "%Y%m%d")
     days  = [(start + timedelta(days=i)).strftime("%Y%m%d")
              for i in range((end - start).days + 1)]
 
-    log.info("Iniciando coleta histórica: %s → %s (%d dias)", start_day, end_day, len(days))
-    total_events = 0
-    h2h_cache: dict[tuple[str, str], dict] = {}  # (home_id, away_id) → H2H
+    # --- Carrega checkpoint se solicitado ---
+    ckpt_data: dict = {}
+    resume_day  = None
+    resume_page = 1
+    if resume and checkpoint and checkpoint.exists():
+        ckpt_data   = checkpoint.load()
+        resume_day  = ckpt_data.get("current_day")
+        resume_page = ckpt_data.get("current_page", 1)
+        total_events = ckpt_data.get("total_events", 0)
+        log.info("Retomando coleta a partir do dia %s, página %d (%d jogos já coletados).",
+                 resume_day, resume_page, total_events)
+    else:
+        total_events = 0
 
-    for day in tqdm(days, desc="Dias"):
-        page = 1
-        while True:
-            resp = client.get_ended_events(day, page=page, league_id=league_id)
-            time.sleep(REQUEST_DELAY)
+    log.info("Coleta histórica: %s → %s (%d dias) | limite=%d req/hora",
+             start_day, end_day, len(days), client.max_requests)
 
-            events = resp.get("results", []) or []
-            if not events:
-                break
+    h2h_cache: dict[tuple[str, str], dict] = {}
 
-            for event in events:
-                event_id = str(event.get("id", ""))
-                if not event_id:
-                    continue
+    def _save_checkpoint(day: str, page: int):
+        if checkpoint:
+            checkpoint.save({
+                "start_day":    start_day,
+                "end_day":      end_day,
+                "current_day":  day,
+                "current_page": page,
+                "total_events": total_events,
+                "league_id":    league_id,
+            })
 
-                meta = extract_event_metadata(event)
+    try:
+        for day in tqdm(days, desc="Dias"):
+            # Pula dias já processados quando retomando
+            if resume_day and day < resume_day:
+                continue
 
-                # Stats trend (série por minuto)
-                trend_resp = client.get_stats_trend(event_id)
-                time.sleep(REQUEST_DELAY)
-                raw_trend = trend_resp.get("results", []) or []
-                snapshot_rows = parse_stats_trend(raw_trend, event_id, meta)
+            start_page = resume_page if (resume_day and day == resume_day) else 1
+            resume_page = 1  # reseta para próximos dias
 
-                # Detalhes do jogo para panorama
-                view_resp = client.get_event_view(event_id)
-                time.sleep(REQUEST_DELAY)
-                panorama_row = build_panorama_row(event_id, meta, view_resp, snapshot_rows)
-
-                # Odds pré-jogo (escanteios + 1x2 + gols + BTTS)
-                odds_resp = client.get_prematch_odds(event_id)
-                time.sleep(REQUEST_DELAY)
-                panorama_row.update(parse_prematch_odds(odds_resp))
-
-                # H2H (confronto direto) — com cache por par de times
-                pair_key = (meta["home_id"], meta["away_id"])
-                if pair_key not in h2h_cache:
-                    h2h_resp = client.get_h2h(event_id)
+            page = start_page
+            while True:
+                try:
+                    resp = client.get_ended_events(day, page=page, league_id=league_id)
                     time.sleep(REQUEST_DELAY)
-                    h2h_cache[pair_key] = parse_h2h_corners(h2h_resp)
-                panorama_row.update(h2h_cache[pair_key])
-
-                saver.add_snapshots(snapshot_rows)
-                saver.add_panorama(panorama_row)
-                total_events += 1
-
-                if total_events % flush_every == 0:
+                except RateLimitReached as exc:
+                    log.warning("Rate limit ao buscar eventos: %s", exc)
+                    _save_checkpoint(day, page)
                     saver.flush()
+                    log.info("▶ Para retomar: adicione --resume ao comando.")
+                    log.info("  Requests usados nesta sessão: %d / %d",
+                             client.request_count, client.max_requests)
+                    return
 
-            # Paginação
-            pager = resp.get("pager", {}) or {}
-            total_pages = pager.get("total_pages", 1)
-            if page >= int(total_pages):
-                break
-            page += 1
+                events = resp.get("results", []) or []
+                if not events:
+                    break
+
+                for event in events:
+                    event_id = str(event.get("id", ""))
+                    if not event_id:
+                        continue
+
+                    meta = extract_event_metadata(event)
+
+                    try:
+                        # Stats trend (série por minuto)
+                        trend_resp = client.get_stats_trend(event_id)
+                        time.sleep(REQUEST_DELAY)
+                        raw_trend = trend_resp.get("results", []) or []
+                        snapshot_rows = parse_stats_trend(raw_trend, event_id, meta)
+
+                        # Detalhes do jogo para panorama
+                        view_resp = client.get_event_view(event_id)
+                        time.sleep(REQUEST_DELAY)
+                        panorama_row = build_panorama_row(event_id, meta, view_resp, snapshot_rows)
+
+                        # Odds pré-jogo (escanteios + 1x2 + gols + BTTS)
+                        odds_resp = client.get_prematch_odds(event_id)
+                        time.sleep(REQUEST_DELAY)
+                        panorama_row.update(parse_prematch_odds(odds_resp))
+
+                        # H2H (confronto direto) — com cache por par de times
+                        pair_key = (meta["home_id"], meta["away_id"])
+                        if pair_key not in h2h_cache:
+                            h2h_resp = client.get_h2h(event_id)
+                            time.sleep(REQUEST_DELAY)
+                            h2h_cache[pair_key] = parse_h2h_corners(h2h_resp)
+                        panorama_row.update(h2h_cache[pair_key])
+
+                    except RateLimitReached as exc:
+                        log.warning("Rate limit ao processar evento %s: %s", event_id, exc)
+                        _save_checkpoint(day, page)
+                        saver.flush()
+                        log.info("▶ Para retomar: adicione --resume ao comando.")
+                        log.info("  Requests usados nesta sessão: %d / %d",
+                                 client.request_count, client.max_requests)
+                        return
+
+                    saver.add_snapshots(snapshot_rows)
+                    saver.add_panorama(panorama_row)
+                    total_events += 1
+
+                    if total_events % flush_every == 0:
+                        saver.flush()
+                        log.info("  Progresso: %d jogos | requests: %d/%d",
+                                 total_events, client.request_count, client.max_requests)
+
+                # Paginação
+                pager = resp.get("pager", {}) or {}
+                total_pages = pager.get("total_pages", 1)
+                if page >= int(total_pages):
+                    break
+                page += 1
+
+    except KeyboardInterrupt:
+        log.info("Interrompido pelo usuário (Ctrl+C).")
+        _save_checkpoint(days[-1] if days else start_day, 1)
+        saver.flush()
+        log.info("▶ Para retomar: adicione --resume ao comando.")
+        return
 
     saver.flush()
-    log.info("Coleta histórica concluída. Total de jogos: %d", total_events)
+    if checkpoint:
+        checkpoint.clear()
+    log.info("Coleta histórica concluída. Total de jogos: %d | Requests usados: %d",
+             total_events, client.request_count)
 
 
 # ---------------------------------------------------------------------------
