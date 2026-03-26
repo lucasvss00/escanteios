@@ -728,6 +728,17 @@ class DataSaver:
                 df_combined = pd.concat([df_existing, df_new], ignore_index=True)
                 valid_dedup = [c for c in dedup_cols if c in df_combined.columns]
                 if valid_dedup:
+                    # Deduplicação inteligente: prefere "historico" sobre "live"
+                    # quando o mesmo event_id existir em ambas as origens
+                    if "collection_source" in df_combined.columns:
+                        source_order = {"live": 0, "historico": 1}
+                        df_combined["_src_order"] = (
+                            df_combined["collection_source"]
+                            .map(source_order)
+                            .fillna(0)
+                        )
+                        df_combined = df_combined.sort_values("_src_order")
+                        df_combined = df_combined.drop(columns=["_src_order"])
                     df_combined = df_combined.drop_duplicates(
                         subset=valid_dedup, keep="last"
                     ).reset_index(drop=True)
