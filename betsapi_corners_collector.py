@@ -947,6 +947,16 @@ def run_historico(
                     if not event_id:
                         continue
 
+                    # Pula jogos não encerrados (time_status != "3")
+                    # Evita coletar dados parciais de jogos ainda em andamento
+                    # O jogo aparecerá novamente quando encerrado
+                    time_status = str(event.get("time_status", ""))
+                    if time_status != "3":
+                        page_skipped += 1
+                        day_skipped  += 1
+                        session_skip += 1
+                        continue
+
                     # Pula jogos já coletados — zero requests extras
                     if event_id in collected_ids:
                         page_skipped += 1
