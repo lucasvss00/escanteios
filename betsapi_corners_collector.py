@@ -1185,6 +1185,10 @@ def parse_args():
         "--no-auto-wait", action="store_true",
         help="Desativa pausa automática ao atingir rate limit — encerra e salva checkpoint"
     )
+    parser.add_argument(
+        "--max-games", type=int, default=None,
+        help="Para após coletar N jogos novos (útil para testes rápidos)"
+    )
     return parser.parse_args()
 
 
