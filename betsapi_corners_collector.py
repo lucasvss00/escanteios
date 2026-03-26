@@ -320,7 +320,8 @@ def _to_int(val) -> Optional[int]:
 
 
 def build_panorama_row(event_id: str, meta: dict, event_view: dict,
-                       snapshot_rows: list[dict]) -> dict:
+                       snapshot_rows: list[dict],
+                       source: str = "historico") -> dict:
     """
     Cria 1 linha de resumo por jogo para o panorama final.
     Inclui totais finais e médias por minuto (útil para features de ML).
