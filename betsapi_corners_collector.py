@@ -202,9 +202,6 @@ class BetsAPIClient:
         """Odds ao vivo Bet365 para um evento."""
         return self._get("/v1/bet365/inplay", {"FI": event_id})
 
-    def get_h2h(self, event_id: str) -> dict:
-        """Confrontos diretos (H2H) entre os dois times do evento."""
-        return self._get("/v1/h2h", {"event_id": event_id})
 
 
 # ---------------------------------------------------------------------------
