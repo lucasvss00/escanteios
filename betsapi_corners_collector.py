@@ -895,7 +895,8 @@ def run_historico(
     checkpoint: Optional[CheckpointManager] = None,
     resume: bool = False,
     max_games: Optional[int] = None,
-    exclude_esports: bool = True,  # padrão: excluir esports
+    exclude_esports: bool = True,
+    workers: int = 1,
 ):
     """
     Itera de start_day até end_day (inclusive), coleta todos os jogos
