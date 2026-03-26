@@ -258,7 +258,7 @@ def extract_event_metadata(event: dict) -> dict:
         "home_id":     str(home.get("id", "")),
         "away_id":     str(away.get("id", "")),
         "time_unix":   event.get("time", None),
-        "kickoff_dt":  datetime.fromtimestamp(int(event["time"]), datetime.UTC).isoformat()
+        "kickoff_dt":  datetime.fromtimestamp(int(event["time"]), UTC).isoformat()
                        if event.get("time") else None,
         "match_minute": timer.get("tm", None),
         "match_second": timer.get("ts", None),
