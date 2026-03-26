@@ -1154,8 +1154,8 @@ def parse_args():
         description="Coletor de dados de escanteios via BetsAPI"
     )
     parser.add_argument(
-        "--token", required=True,
-        help="Token de autenticação da BetsAPI"
+        "--token", required=False, default=None,
+        help="Token de autenticação da BetsAPI (ou salve em config.json)"
     )
     parser.add_argument(
         "--mode", choices=["historico", "live"], default="historico",
