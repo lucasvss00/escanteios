@@ -29,7 +29,9 @@
       "Bash(where python3:*)",
       "Bash(where py:*)",
       "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''✅ OK''\\)\")",
-      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK''\\)\")"
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''✓ Compilação OK''\\)\")",
+      "Bash(conda activate:*)"
     ]
   }
 }
