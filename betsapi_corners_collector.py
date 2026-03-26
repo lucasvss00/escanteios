@@ -797,6 +797,7 @@ def run_historico(
     flush_every: int = 50,
     checkpoint: Optional[CheckpointManager] = None,
     resume: bool = False,
+    max_games: Optional[int] = None,
 ):
     """
     Itera de start_day até end_day (inclusive), coleta todos os jogos
