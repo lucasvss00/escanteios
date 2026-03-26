@@ -1000,15 +1000,9 @@ def run_historico(
                     saver.add_snapshots(snapshot_rows)
                     saver.add_panorama(panorama_row)
 
-                    # Só marca como coletado se o jogo tem placar final confirmado
-                    # (final_score_home não-None = event/view confirmou que o jogo encerrou)
-                    # Jogos sem placar final são re-coletados na próxima sessão
-                    game_complete = panorama_row.get("final_score_home") is not None
-                    if game_complete:
-                        collected_ids.add(event_id)
-                        total_events += 1
-                    else:
-                        log.info("Jogo %s sem placar final confirmado — será re-coletado.", event_id)
+                    # time_status == "3" já confirmou que o jogo encerrou
+                    collected_ids.add(event_id)
+                    total_events += 1
 
                     session_new   += 1
                     page_new      += 1
