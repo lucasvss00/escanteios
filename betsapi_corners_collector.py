@@ -1049,17 +1049,32 @@ def parse_args():
 def main():
     args = parse_args()
 
-    client = BetsAPIClient(token=args.token)
+    client = BetsAPIClient(token=args.token, max_requests=args.max_requests)
     saver  = DataSaver(output_dir=args.output, save_csv=not args.no_csv)
 
     if args.mode == "historico":
+        output_path = Path(args.output)
+        output_path.mkdir(parents=True, exist_ok=True)
+        checkpoint = CheckpointManager(output_path / "checkpoint.json")
+
         today = datetime.utcnow()
-        if args.days:
-            end_day   = (today - timedelta(days=1)).strftime("%Y%m%d")
-            start_day = (today - timedelta(days=args.days)).strftime("%Y%m%d")
+
+        # Se --resume, lê datas do checkpoint (ignora --start/--end/--days)
+        if args.resume and checkpoint.exists():
+            ckpt = checkpoint.load()
+            start_day = ckpt.get("start_day")
+            end_day   = ckpt.get("end_day")
+            if not start_day or not end_day:
+                log.error("Checkpoint inválido — sem start_day/end_day. Use sem --resume.")
+                return
+            log.info("Datas lidas do checkpoint: %s → %s", start_day, end_day)
         else:
-            end_day   = args.end   or (today - timedelta(days=1)).strftime("%Y%m%d")
-            start_day = args.start or (today - timedelta(days=7)).strftime("%Y%m%d")
+            if args.days:
+                end_day   = (today - timedelta(days=1)).strftime("%Y%m%d")
+                start_day = (today - timedelta(days=args.days)).strftime("%Y%m%d")
+            else:
+                end_day   = args.end   or (today - timedelta(days=1)).strftime("%Y%m%d")
+                start_day = args.start or (today - timedelta(days=7)).strftime("%Y%m%d")
 
         run_historico(
             client=client,
@@ -1067,6 +1082,8 @@ def main():
             start_day=start_day,
             end_day=end_day,
             league_id=args.league_id,
+            checkpoint=checkpoint,
+            resume=args.resume,
         )
 
     elif args.mode == "live":
