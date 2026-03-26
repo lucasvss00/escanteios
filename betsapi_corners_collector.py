@@ -90,23 +90,23 @@ class BetsAPIClient:
         self.max_requests = max_requests   # limite por janela de 1h
         self.auto_wait    = auto_wait      # pausa automática ao atingir o limite
         self.request_count = 0
-        self.window_start  = datetime.utcnow()
+        self.window_start  = datetime.now(datetime.UTC)
 
     @property
     def requests_remaining(self) -> int:
         return max(0, self.max_requests - self.request_count)
 
     def seconds_until_reset(self) -> int:
-        elapsed = (datetime.utcnow() - self.window_start).total_seconds()
+        elapsed = (datetime.now(datetime.UTC) - self.window_start).total_seconds()
         return max(0, int(3600 - elapsed))
 
     def _reset_window_if_needed(self):
-        elapsed = (datetime.utcnow() - self.window_start).total_seconds()
+        elapsed = (datetime.now(datetime.UTC) - self.window_start).total_seconds()
         if elapsed >= 3600:
             log.info("Nova janela de rate limit iniciada (anterior: %d requests em %.0fs).",
                      self.request_count, elapsed)
             self.request_count = 0
-            self.window_start  = datetime.utcnow()
+            self.window_start  = datetime.now(datetime.UTC)
 
     def _check_rate_limit(self):
         self._reset_window_if_needed()
@@ -128,10 +128,10 @@ class BetsAPIClient:
                     print(f"  ⏳ Aguardando... {remaining // 60} min {remaining % 60} s restantes")
             # Reseta janela e continua normalmente
             self.request_count = 0
-            self.window_start  = datetime.utcnow()
+            self.window_start  = datetime.now(datetime.UTC)
             print(f"\n  ▶  Janela resetada — retomando coleta...\n")
         else:
-            elapsed  = (datetime.utcnow() - self.window_start).total_seconds()
+            elapsed  = (datetime.now(datetime.UTC) - self.window_start).total_seconds()
             wait_sec = self.seconds_until_reset()
             raise RateLimitReached(
                 f"Limite de {self.max_requests} requests atingido "
@@ -336,7 +336,7 @@ def parse_stats_trend(raw_trend, event_id: str, meta: dict,
     # Forward-fill: percorre minuto a minuto e mantém último valor conhecido
     last_home: dict[str, Optional[int]] = {s: None for s in FIELD_MAP}
     last_away: dict[str, Optional[int]] = {s: None for s in FIELD_MAP}
-    collected_ts = datetime.utcnow().isoformat()
+    collected_ts = datetime.now(datetime.UTC).isoformat()
 
     for minute in range(0, max_minute + 1):
         # Atualiza valores se há entrada neste minuto
@@ -418,7 +418,7 @@ def build_panorama_row(event_id: str, meta: dict, event_view: dict,
         "total_goals":      (final_h or 0) + (final_a or 0),
         # Escanteios totais (fonte: /event/view stats)
         "collection_source":              source,
-        "collected_at":                   datetime.utcnow().isoformat(),
+        "collected_at":                   datetime.now(datetime.UTC).isoformat(),
         "corners_home_total":             corners_h,
         "corners_away_total":             corners_a,
         # has_stats = True se stats_trend retornou dados; distingue "0 escanteios reais"
@@ -677,7 +677,7 @@ class CheckpointManager:
         self.path = path
 
     def save(self, data: dict):
-        data["saved_at"] = datetime.utcnow().isoformat()
+        data["saved_at"] = datetime.now(datetime.UTC).isoformat()
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         log.info("Checkpoint salvo → %s", self.path)
@@ -846,7 +846,7 @@ def run_historico(
     # --- Banner de início ---
     days_pending = sum(1 for d in days if not resume_day or d >= resume_day)
     print(f"\n{'═'*62}")
-    print(f"  BetsAPI Corner Collector  —  {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC")
+    print(f"  BetsAPI Corner Collector  —  {datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M')} UTC")
     print(f"{'─'*62}")
     print(f"  Range     : {start_day} → {end_day}  ({len(days)} dias)")
     if resume_day:
@@ -1061,7 +1061,7 @@ def run_live(
             if max_iterations is not None and iteration >= max_iterations:
                 break
             iteration += 1
-            log.info("--- Ciclo %d | %s ---", iteration, datetime.utcnow().isoformat())
+            log.info("--- Ciclo %d | %s ---", iteration, datetime.now(datetime.UTC).isoformat())
 
             inplay_resp = client.get_inplay_events()
             time.sleep(REQUEST_DELAY)
@@ -1232,7 +1232,7 @@ def main():
         output_path.mkdir(parents=True, exist_ok=True)
         checkpoint = CheckpointManager(output_path / "checkpoint.json")
 
-        today = datetime.utcnow()
+        today = datetime.now(datetime.UTC)
 
         # Se --resume, lê datas do checkpoint (ignora --start/--end/--days)
         if args.resume and checkpoint.exists():
