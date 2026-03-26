@@ -1255,6 +1255,7 @@ def main():
             checkpoint=checkpoint,
             resume=args.resume,
             max_games=args.max_games,
+            exclude_esports=args.exclude_esports,
         )
 
     elif args.mode == "live":
