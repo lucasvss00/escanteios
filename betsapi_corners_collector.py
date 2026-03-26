@@ -850,12 +850,14 @@ def run_historico(
                         trend_resp = client.get_stats_trend(event_id)
                         time.sleep(REQUEST_DELAY)
                         raw_trend = trend_resp.get("results", []) or []
-                        snapshot_rows = parse_stats_trend(raw_trend, event_id, meta)
+                        snapshot_rows = parse_stats_trend(raw_trend, event_id, meta,
+                                                          source="historico")
 
                         # Detalhes do jogo para panorama
                         view_resp = client.get_event_view(event_id)
                         time.sleep(REQUEST_DELAY)
-                        panorama_row = build_panorama_row(event_id, meta, view_resp, snapshot_rows)
+                        panorama_row = build_panorama_row(event_id, meta, view_resp,
+                                                          snapshot_rows, source="historico")
 
                         # Odds pré-jogo (escanteios + 1x2 + gols + BTTS)
                         odds_resp = client.get_prematch_odds(event_id)
