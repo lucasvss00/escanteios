@@ -639,11 +639,53 @@ def parse_h2h_corners(h2h_resp: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint — salva e retoma progresso entre execuções
+# ---------------------------------------------------------------------------
+
+class CheckpointManager:
+    """
+    Persiste o progresso da coleta histórica em um arquivo JSON.
+    Permite retomar de onde parou após atingir o rate limit ou interrupção.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def save(self, data: dict):
+        data["saved_at"] = datetime.utcnow().isoformat()
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        log.info("Checkpoint salvo → %s", self.path)
+
+    def load(self) -> dict:
+        if not self.path.exists():
+            return {}
+        with open(self.path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        log.info("Checkpoint carregado: dia=%s página=%d eventos=%d",
+                 data.get("current_day"), data.get("current_page", 1),
+                 data.get("total_events", 0))
+        return data
+
+    def clear(self):
+        if self.path.exists():
+            self.path.unlink()
+            log.info("Checkpoint removido (coleta concluída).")
+
+    def exists(self) -> bool:
+        return self.path.exists()
+
+
+# ---------------------------------------------------------------------------
 # Salvamento incremental
 # ---------------------------------------------------------------------------
 
 class DataSaver:
-    """Mantém dois buffers em memória e salva em Parquet + CSV."""
+    """
+    Mantém dois buffers em memória e salva em Parquet + CSV.
+    Ao gravar, mescla com dados já existentes no disco e deduplica por event_id,
+    garantindo segurança em caso de retomada com --resume.
+    """
 
     def __init__(self, output_dir: str, save_csv: bool = True):
         self.out = Path(output_dir)
@@ -659,20 +701,37 @@ class DataSaver:
         self.panoramas.append(row)
 
     def flush(self):
-        """Grava tudo no disco. Chame periodicamente ou ao final."""
-        self._save_df(self.snapshots, "snapshots_por_minuto")
-        self._save_df(self.panoramas, "panorama_jogos")
-        log.info("Dados salvos → %s (%d snapshots, %d jogos)",
+        """Grava tudo no disco mesclando com dados existentes (safe para --resume)."""
+        self._save_df(self.snapshots, "snapshots_por_minuto",
+                      dedup_cols=["event_id", "minute"])
+        self._save_df(self.panoramas, "panorama_jogos",
+                      dedup_cols=["event_id"])
+        log.info("Dados salvos → %s (%d snapshots em buffer, %d jogos em buffer)",
                  self.out, len(self.snapshots), len(self.panoramas))
 
-    def _save_df(self, data: list[dict], name: str):
+    def _save_df(self, data: list[dict], name: str, dedup_cols: list[str]):
         if not data:
             return
-        df = pd.DataFrame(data)
+        df_new = pd.DataFrame(data)
         pq_path = self.out / f"{name}.parquet"
-        df.to_parquet(pq_path, index=False)
+
+        # Mescla com dados existentes e deduplica (mantém o mais recente)
+        if pq_path.exists():
+            try:
+                df_existing = pd.read_parquet(pq_path)
+                df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+                valid_dedup = [c for c in dedup_cols if c in df_combined.columns]
+                if valid_dedup:
+                    df_combined = df_combined.drop_duplicates(
+                        subset=valid_dedup, keep="last"
+                    ).reset_index(drop=True)
+                df_new = df_combined
+            except Exception as exc:
+                log.warning("Erro ao mesclar parquet existente (%s): %s — sobrescrevendo.", name, exc)
+
+        df_new.to_parquet(pq_path, index=False)
         if self.save_csv:
-            df.to_csv(self.out / f"{name}.csv", index=False)
+            df_new.to_csv(self.out / f"{name}.csv", index=False)
 
 
 # ---------------------------------------------------------------------------
