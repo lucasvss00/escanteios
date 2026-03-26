@@ -22,7 +22,14 @@
       "Skill(update-config)",
       "Skill(update-config:*)",
       "Bash(\"C:/Users/Lucas/anaconda3/envs/Betsapi/python.exe\" -c \"import json; d=json.load\\(open\\(''.claude/settings.json''\\)\\); print\\(''JSON OK''\\); print\\(''Comando:'', d[''hooks''][''PostToolUse''][0][''hooks''][0][''command''][:80], ''...''\\)\")",
-      "Bash(\"C:/Users/Lucas/anaconda3/envs/Betsapi/python.exe\" -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK''\\)\")"
+      "Bash(\"C:/Users/Lucas/anaconda3/envs/Betsapi/python.exe\" -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''✅ Compilação OK — sem erros de sintaxe''\\)\")",
+      "Bash(py -3 -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(python3 -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK''\\)\")",
+      "Bash(where python3:*)",
+      "Bash(where py:*)",
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''✅ OK''\\)\")",
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK''\\)\")"
     ]
   }
 }

@@ -47,7 +47,6 @@ from typing import Optional
 
 import pandas as pd
 import requests
-from tqdm import tqdm
 
 # ---------------------------------------------------------------------------
 # Configuração de logging
