@@ -1266,6 +1266,12 @@ def parse_args():
         "--include-esports", action="store_true",
         help="Inclui ligas de esports/virtual/fantasy (padrão: excluídas)"
     )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Número de eventos processados em paralelo (padrão: 1). "
+             "Cada worker dispara 3 requests simultâneos (stats_trend + event_view + prematch_odds). "
+             "Exemplo: --workers 4 processa ~4× mais rápido sem ultrapassar o rate limit."
+    )
     return parser.parse_args()
 
 
