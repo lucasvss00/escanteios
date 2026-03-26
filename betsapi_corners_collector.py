@@ -909,7 +909,7 @@ def run_historico(
 
             while True:
                 try:
-                    resp = client.get_ended_events(day, page=page, league_id=league_id)
+                    resp = client.get_ended_events(day, page=page, league_id=league_id, skip_esports=exclude_esports)
                     time.sleep(REQUEST_DELAY)
                 except RateLimitReached as exc:
                     log.warning("Rate limit (auto_wait=False): %s", exc)
