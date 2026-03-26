@@ -989,8 +989,18 @@ def run_historico(
 
                     saver.add_snapshots(snapshot_rows)
                     saver.add_panorama(panorama_row)
-                    collected_ids.add(event_id)
-                    total_events  += 1
+
+                    # Só marca como coletado se o jogo parece completo
+                    # (último minuto do stats_trend >= 85 → jogo encerrado)
+                    # Jogos incompletos serão re-coletados na próxima sessão
+                    last_minute = snapshot_rows[-1]["minute"] if snapshot_rows else 0
+                    if last_minute >= 85:
+                        collected_ids.add(event_id)
+                        total_events += 1
+                    else:
+                        log.info("Jogo %s parece incompleto (último minuto: %d) — será re-coletado.",
+                                 event_id, last_minute)
+
                     session_new   += 1
                     page_new      += 1
                     day_new       += 1
