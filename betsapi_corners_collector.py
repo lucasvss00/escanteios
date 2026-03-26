@@ -1075,12 +1075,6 @@ def run_live(
 
                 if snapshot_rows:
                     latest = snapshot_rows[-1].copy()
-
-                    # Odds ao vivo de escanteios
-                    inplay_odds_resp = client.get_inplay_odds(event_id)
-                    time.sleep(REQUEST_DELAY)
-                    latest.update(parse_inplay_corner_odds(inplay_odds_resp))
-
                     saver.add_snapshots([latest])
 
             # Detecta jogos que saíram do ao vivo (terminaram)
