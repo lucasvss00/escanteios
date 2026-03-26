@@ -1200,8 +1200,8 @@ def parse_args():
         help="Para após coletar N jogos novos (útil para testes rápidos)"
     )
     parser.add_argument(
-        "--exclude-esports", action="store_true",
-        help="Pula ligas de esports/virtual/fantasy (ativa filtro automático)"
+        "--include-esports", action="store_true",
+        help="Inclui ligas de esports/virtual/fantasy (padrão: excluídas)"
     )
     return parser.parse_args()
 
