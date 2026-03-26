@@ -1340,7 +1340,8 @@ def main():
             checkpoint=checkpoint,
             resume=args.resume,
             max_games=args.max_games,
-            exclude_esports=not args.include_esports,  # padrão: excluir esports
+            exclude_esports=not args.include_esports,
+            workers=args.workers,
         )
 
     elif args.mode == "live":
