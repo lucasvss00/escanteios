@@ -21,12 +21,9 @@ print(f"Tipo de results  : {type(results)}")
 print(f"Total de snapshots: {len(results)}")
 
 if results:
-    print(f"\nTipo do 1º snapshot: {type(results[0])}")
-    print(f"\n--- Primeiro snapshot ---")
-    print(json.dumps(results[0], indent=2))
-    if len(results) > 1:
-        print(f"\n--- Segundo snapshot ---")
-        print(json.dumps(results[1], indent=2))
+    print(f"\nChaves de results: {list(results.keys())[:5]}")
+    print(f"\n--- Response completa ---")
+    print(json.dumps(results, indent=2))
 else:
     print("\nSem dados — response completa:")
     print(json.dumps(data, indent=2))
