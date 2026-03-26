@@ -932,9 +932,7 @@ def run_historico(
 
                     # Pula esports se solicitado
                     if exclude_esports:
-                        league_name = meta.get("league_name", "") if "meta" in locals() else event.get("league", {}).get("name", "")
-                        if not league_name:
-                            league_name = event.get("league", {}).get("name", "")
+                        league_name = event.get("league", {}).get("name", "")
                         if _is_esports(league_name):
                             page_skipped += 1
                             day_skipped += 1
