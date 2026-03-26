@@ -944,14 +944,6 @@ def run_historico(
                         panorama_row = build_panorama_row(event_id, meta, view_resp,
                                                           snapshot_rows, source="historico")
 
-                        # H2H (com cache)
-                        pair_key = (meta["home_id"], meta["away_id"])
-                        if pair_key not in h2h_cache:
-                            h2h_resp = client.get_h2h(event_id)
-                            time.sleep(REQUEST_DELAY)
-                            h2h_cache[pair_key] = parse_h2h_corners(h2h_resp)
-                        panorama_row.update(h2h_cache[pair_key])
-
                     except RateLimitReached as exc:
                         # Só ocorre se auto_wait=False
                         log.warning("Rate limit ao processar %s: %s", event_id, exc)
