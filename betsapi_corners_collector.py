@@ -357,6 +357,8 @@ def build_panorama_row(event_id: str, meta: dict, event_view: dict,
         "final_score_away": final_a,
         "total_goals":      (final_h or 0) + (final_a or 0),
         # Escanteios totais (fonte: /event/view stats)
+        "collection_source":              source,
+        "collected_at":                   datetime.utcnow().isoformat(),
         "corners_home_total":             corners_h,
         "corners_away_total":             corners_a,
         "corners_total":                  (corners_h or 0) + (corners_a or 0),
