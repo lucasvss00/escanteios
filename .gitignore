@@ -1,3 +1,6 @@
+# Credenciais - nunca versionar
+config.json
+
 # Dados grandes - não versionar
 dataset_corners_features_w5.csv
 dados_escanteios/
