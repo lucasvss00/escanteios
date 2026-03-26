@@ -821,17 +821,19 @@ def run_historico(
                  resume_day, total_events)
 
     # --- Carrega event_ids já coletados para skip inteligente ---
+    # Sempre ativo — independente de --resume. Garante 0 requests extras
+    # para jogos já no Parquet, seja num resume ou num job novo com range maior.
     collected_ids: set[str] = set()
-    if resume:
-        pano_path = saver.out / "panorama_jogos.parquet"
-        if pano_path.exists():
-            try:
-                df_ex = pd.read_parquet(pano_path, columns=["event_id"])
-                collected_ids = set(df_ex["event_id"].astype(str))
-                log.info("Skip inteligente: %d jogos já coletados serão pulados (0 requests).",
+    pano_path = saver.out / "panorama_jogos.parquet"
+    if pano_path.exists():
+        try:
+            df_ex = pd.read_parquet(pano_path, columns=["event_id"])
+            collected_ids = set(df_ex["event_id"].astype(str))
+            if collected_ids:
+                log.info("Skip inteligente: %d jogos já no Parquet serão pulados (0 requests).",
                          len(collected_ids))
-            except Exception as exc:
-                log.warning("Erro ao carregar IDs existentes: %s — nenhum jogo será pulado.", exc)
+        except Exception as exc:
+            log.warning("Erro ao carregar IDs existentes: %s — nenhum jogo será pulado.", exc)
 
     log.info("Coleta histórica: %s → %s (%d dias) | limite=%d req/hora | auto_wait=%s",
              start_day, end_day, len(days), client.max_requests, client.auto_wait)
