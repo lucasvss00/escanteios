@@ -970,6 +970,13 @@ def run_historico(
                     if total_events % flush_every == 0:
                         saver.flush()
 
+                    # Limite de jogos para testes
+                    if max_games and session_new >= max_games:
+                        print(f"\n  🏁 --max-games {max_games} atingido — encerrando.")
+                        saver.flush()
+                        _print_session_summary(session_new, session_skip, total_events, client)
+                        return
+
                 # --- Status da página ---
                 req_used = client.request_count
                 req_pct  = req_used / client.max_requests * 100
