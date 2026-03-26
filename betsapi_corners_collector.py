@@ -674,6 +674,89 @@ def parse_inplay_corner_odds(odds_resp: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Coleta paralela de dados por evento (Opções 3 e 4)
+# ---------------------------------------------------------------------------
+
+def _fetch_event_data(
+    client: "BetsAPIClient",
+    event_id: str,
+) -> tuple[dict, dict, dict]:
+    """
+    Opção 3 — dispara as 3 chamadas de API de um evento em paralelo.
+    Retorna (trend_resp, view_resp, odds_resp).
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        f_trend = pool.submit(client.get_stats_trend,    event_id)
+        f_view  = pool.submit(client.get_event_view,     event_id)
+        f_odds  = pool.submit(client.get_prematch_odds,  event_id)
+        return f_trend.result(), f_view.result(), f_odds.result()
+
+
+def _process_one_event(
+    client: "BetsAPIClient",
+    event_id: str,
+    meta: dict,
+) -> tuple[str, dict, list[dict], dict]:
+    """
+    Busca e processa todos os dados de um evento.
+    Retorna (event_id, meta, snapshot_rows, panorama_row).
+    Pode lançar RateLimitReached se auto_wait=False.
+    """
+    trend_resp, view_resp, odds_resp = _fetch_event_data(client, event_id)
+    raw_trend     = trend_resp.get("results") or {}
+    snapshot_rows = parse_stats_trend(raw_trend, event_id, meta, source="historico")
+    panorama_row  = build_panorama_row(event_id, meta, view_resp, snapshot_rows,
+                                       source="historico")
+    corner_odds   = parse_prematch_odds(odds_resp)
+    panorama_row.update(corner_odds)
+    return event_id, meta, snapshot_rows, panorama_row
+
+
+def _collect_events(
+    client: "BetsAPIClient",
+    events: list[tuple[str, dict]],
+    workers: int = 1,
+) -> list[tuple[str, list[dict], dict]]:
+    """
+    Opção 4 — processa um lote de eventos com `workers` threads simultâneas.
+    Cada worker chama _process_one_event (que por sua vez usa _fetch_event_data).
+    Retorna lista de (event_id, snapshot_rows, panorama_row).
+    Lança RateLimitReached se qualquer worker encontrar o limite (auto_wait=False).
+    """
+    if not events:
+        return []
+
+    if workers <= 1:
+        results = []
+        for eid, meta in events:
+            _, _, snap, pano = _process_one_event(client, eid, meta)
+            results.append((eid, snap, pano))
+        return results
+
+    results: list[tuple[str, list[dict], dict]] = []
+    rate_exc: Optional[RateLimitReached] = None
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        future_map = {
+            pool.submit(_process_one_event, client, eid, meta): eid
+            for eid, meta in events
+        }
+        for fut in concurrent.futures.as_completed(future_map):
+            eid = future_map[fut]
+            try:
+                _, _, snap, pano = fut.result()
+                results.append((eid, snap, pano))
+            except RateLimitReached as exc:
+                rate_exc = exc   # guarda para propagar após o pool fechar
+            except Exception as exc:
+                log.warning("Erro ao processar evento %s: %s", eid, exc)
+
+    if rate_exc:
+        raise rate_exc
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Checkpoint — salva e retoma progresso entre execuções
 # ---------------------------------------------------------------------------
 
