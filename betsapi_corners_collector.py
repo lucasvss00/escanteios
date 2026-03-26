@@ -116,6 +116,8 @@ class BetsAPIClient:
             )
 
     def _get(self, endpoint: str, params: dict = None) -> dict:
+        self._check_rate_limit()   # lança RateLimitReached se necessário
+
         url = f"{BASE_URL}{endpoint}"
         params = params or {}
         params.setdefault("token", self.token)
@@ -125,6 +127,7 @@ class BetsAPIClient:
                 resp = self.session.get(url, params=params, timeout=15)
                 resp.raise_for_status()
                 data = resp.json()
+                self.request_count += 1
                 if data.get("success") == 1:
                     return data
                 log.warning("API retornou success=0 em %s: %s", endpoint, data.get("error", ""))
