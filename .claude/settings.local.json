@@ -17,7 +17,10 @@
       "Read(//c/Users/Lucas/**)",
       "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_collector.py'', doraise=True\\); print\\(''collector OK''\\); py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', doraise=True\\); print\\(''analysis OK''\\)\")",
       "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', doraise=True\\); print\\(''OK''\\)\")",
-      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \":*)"
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \":*)",
+      "Bash(\"C:/Users/Lucas/anaconda3/envs/Betsapi/python.exe\" -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK — sem erros de sintaxe''\\)\")",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
     ]
   }
 }

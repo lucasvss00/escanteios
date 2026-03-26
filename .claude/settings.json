@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"c:/Users/Lucas/Desktop/FIFA/escanteios\" && git diff --quiet && git diff --cached --quiet || (git add -A && git commit -m \"auto: atualização via Claude Code\" && git push origin main) 2>/dev/null || true",
+            "command": "INPUT=$(cat); cd \"c:/Users/Lucas/Desktop/FIFA/escanteios\" && git add -A 2>/dev/null; if ! git diff --cached --quiet; then FILE=$(printf '%s' \"$INPUT\" | jq -r '.tool_input.file_path // \"projeto\"' 2>/dev/null | xargs -I{} basename {} 2>/dev/null); STAT=$(git diff --cached --shortstat 2>/dev/null | tr -d '\\n'); git commit -m \"auto(${FILE:-projeto}): ${STAT:-atualizado}\" && git push origin main; fi 2>/dev/null || true",
             "timeout": 30,
             "statusMessage": "Sincronizando com GitHub..."
           }
