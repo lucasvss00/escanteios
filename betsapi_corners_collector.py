@@ -117,20 +117,20 @@ class BetsAPIClient:
         if self.auto_wait:
             # Calcula tempo restante + 15s de margem
             wait_sec = self.seconds_until_reset() + 15
-            log.info(
-                "⏸  Rate limit atingido (%d/%d requests). "
-                "Aguardando %d min %d s para a janela resetar...",
-                self.request_count, self.max_requests,
-                wait_sec // 60, wait_sec % 60,
-            )
+            print(f"\n{'='*60}")
+            print(f"  ⏸  RATE LIMIT ATINGIDO ({self.request_count}/{self.max_requests} requests)")
+            print(f"  Aguardando {wait_sec // 60} min {wait_sec % 60} s para janela resetar...")
+            print(f"  Pressione Ctrl+C para parar e salvar checkpoint.")
+            print(f"{'='*60}")
             for i in range(1, wait_sec + 1):
                 time.sleep(1)
-                if i % 300 == 0:   # log a cada 5 minutos
-                    log.info("  Aguardando... %d min restantes.", (wait_sec - i) // 60)
+                if i % 60 == 0:   # atualiza a cada 1 minuto
+                    remaining = wait_sec - i
+                    print(f"  ⏳ Aguardando... {remaining // 60} min {remaining % 60} s restantes")
             # Reseta janela e continua normalmente
             self.request_count = 0
             self.window_start  = datetime.utcnow()
-            log.info("▶  Janela resetada. Retomando coleta...")
+            print(f"\n  ▶  Janela resetada — retomando coleta...\n")
         else:
             elapsed  = (datetime.utcnow() - self.window_start).total_seconds()
             wait_sec = self.seconds_until_reset()
