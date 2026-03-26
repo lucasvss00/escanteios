@@ -958,7 +958,7 @@ def run_live(
                 trend_resp = client.get_stats_trend(event_id)
                 time.sleep(REQUEST_DELAY)
                 raw_trend = trend_resp.get("results", []) or []
-                snapshot_rows = parse_stats_trend(raw_trend, event_id, meta)
+                snapshot_rows = parse_stats_trend(raw_trend, event_id, meta, source="live")
 
                 if snapshot_rows:
                     latest = snapshot_rows[-1].copy()
