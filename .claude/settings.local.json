@@ -20,7 +20,8 @@
       "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \":*)",
       "Bash(\"C:/Users/Lucas/anaconda3/envs/Betsapi/python.exe\" -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\); print\\(''OK — sem erros de sintaxe''\\)\")",
       "Skill(update-config)",
-      "Skill(update-config:*)"
+      "Skill(update-config:*)",
+      "Bash(\"C:/Users/Lucas/anaconda3/envs/Betsapi/python.exe\" -c \"import json; d=json.load\\(open\\(''.claude/settings.json''\\)\\); print\\(''JSON OK''\\); print\\(''Comando:'', d[''hooks''][''PostToolUse''][0][''hooks''][0][''command''][:80], ''...''\\)\")"
     ]
   }
 }
