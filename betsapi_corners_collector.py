@@ -939,11 +939,6 @@ def run_historico(
                         panorama_row = build_panorama_row(event_id, meta, view_resp,
                                                           snapshot_rows, source="historico")
 
-                        # Odds pré-jogo
-                        odds_resp = client.get_prematch_odds(event_id)
-                        time.sleep(REQUEST_DELAY)
-                        panorama_row.update(parse_prematch_odds(odds_resp))
-
                         # H2H (com cache)
                         pair_key = (meta["home_id"], meta["away_id"])
                         if pair_key not in h2h_cache:
