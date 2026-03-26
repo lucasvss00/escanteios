@@ -878,8 +878,7 @@ def run_historico(
 
             # --- Cabeçalho do dia ---
             day_label = datetime.strptime(day, "%Y%m%d").strftime("%d/%m/%Y")
-            days_done = day_idx - (1 if not resume_day else
-                        sum(1 for d in days[:day_idx-1] if d < resume_day))
+            days_done = sum(1 for d in days[:day_idx] if not resume_day or d >= resume_day)
             print(f"┌─ [{days_done:>3}/{days_pending}] {day_label} "
                   f"{'─' * (44 - len(day_label))}")
 
