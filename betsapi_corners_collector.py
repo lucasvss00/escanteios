@@ -933,15 +933,6 @@ def run_historico(
                     if not event_id:
                         continue
 
-                    # Pula esports se solicitado
-                    if exclude_esports:
-                        league_name = event.get("league", {}).get("name", "")
-                        if _is_esports(league_name):
-                            page_skipped += 1
-                            day_skipped += 1
-                            session_skip += 1
-                            continue
-
                     # Pula jogos já coletados — zero requests extras
                     if event_id in collected_ids:
                         page_skipped += 1
