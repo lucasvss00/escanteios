@@ -1214,11 +1214,29 @@ def parse_args():
     return parser.parse_args()
 
 
+def _load_token(cli_token: Optional[str]) -> str:
+    """Resolve o token: CLI > config.json > erro."""
+    if cli_token:
+        return cli_token
+    config_path = Path(__file__).parent / "config.json"
+    if config_path.exists():
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                token = json.load(f).get("token", "")
+            if token and token != "COLE_SEU_TOKEN_AQUI":
+                return token
+        except Exception:
+            pass
+    print("ERRO: token não encontrado. Use --token SEU_TOKEN ou salve em config.json.")
+    raise SystemExit(1)
+
+
 def main():
     args = parse_args()
+    token = _load_token(args.token)
 
     client = BetsAPIClient(
-        token=args.token,
+        token=token,
         max_requests=args.max_requests,
         auto_wait=not args.no_auto_wait,
     )
