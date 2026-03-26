@@ -981,11 +981,12 @@ def run_live(
                 trend_resp = client.get_stats_trend(event_id)
                 time.sleep(REQUEST_DELAY)
                 raw_trend = trend_resp.get("results", []) or []
-                all_snapshots = parse_stats_trend(raw_trend, event_id, meta)
+                all_snapshots = parse_stats_trend(raw_trend, event_id, meta, source="live")
 
                 view_resp = client.get_event_view(event_id)
                 time.sleep(REQUEST_DELAY)
-                panorama_row = build_panorama_row(event_id, meta, view_resp, all_snapshots)
+                panorama_row = build_panorama_row(event_id, meta, view_resp, all_snapshots,
+                                                  source="live")
 
                 # Odds pré-jogo + H2H para o panorama de jogos finalizados ao vivo
                 odds_resp = client.get_prematch_odds(event_id)
