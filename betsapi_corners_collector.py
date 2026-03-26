@@ -796,9 +796,13 @@ def run_historico(
 
     start_day / end_day: formato YYYYMMDD
 
-    Suporte a checkpoint:
-      - Se `resume=True` e existe checkpoint, retoma do dia/página salvo.
-      - Ao atingir o rate limit, salva checkpoint e encerra com aviso.
+    Suporte a checkpoint e retomada inteligente:
+      - Se `resume=True`, carrega event_ids já coletados do Parquet existente.
+        Ao repassar as páginas, jogos já coletados são pulados (0 requests extras).
+      - Ao atingir o rate limit com auto_wait=True (padrão), pausa e retoma
+        automaticamente sem sair do programa.
+      - Ao atingir o rate limit com auto_wait=False, salva checkpoint e encerra.
+      - Ctrl+C salva checkpoint e encerra. Use --resume para continuar.
       - Ao concluir tudo, remove o checkpoint automaticamente.
     """
     start = datetime.strptime(start_day, "%Y%m%d")
@@ -807,56 +811,63 @@ def run_historico(
              for i in range((end - start).days + 1)]
 
     # --- Carrega checkpoint se solicitado ---
-    ckpt_data: dict = {}
-    resume_day  = None
-    resume_page = 1
+    resume_day   = None
+    total_events = 0
     if resume and checkpoint and checkpoint.exists():
-        ckpt_data   = checkpoint.load()
-        resume_day  = ckpt_data.get("current_day")
-        resume_page = ckpt_data.get("current_page", 1)
+        ckpt_data    = checkpoint.load()
+        resume_day   = ckpt_data.get("current_day")
         total_events = ckpt_data.get("total_events", 0)
-        log.info("Retomando coleta a partir do dia %s, página %d (%d jogos já coletados).",
-                 resume_day, resume_page, total_events)
-    else:
-        total_events = 0
+        log.info("Checkpoint encontrado: retomando a partir do dia %s (%d jogos já coletados).",
+                 resume_day, total_events)
 
-    log.info("Coleta histórica: %s → %s (%d dias) | limite=%d req/hora",
-             start_day, end_day, len(days), client.max_requests)
+    # --- Carrega event_ids já coletados para skip inteligente ---
+    collected_ids: set[str] = set()
+    if resume:
+        pano_path = saver.out / "panorama_jogos.parquet"
+        if pano_path.exists():
+            try:
+                df_ex = pd.read_parquet(pano_path, columns=["event_id"])
+                collected_ids = set(df_ex["event_id"].astype(str))
+                log.info("Skip inteligente: %d jogos já coletados serão pulados (0 requests).",
+                         len(collected_ids))
+            except Exception as exc:
+                log.warning("Erro ao carregar IDs existentes: %s — nenhum jogo será pulado.", exc)
+
+    log.info("Coleta histórica: %s → %s (%d dias) | limite=%d req/hora | auto_wait=%s",
+             start_day, end_day, len(days), client.max_requests, client.auto_wait)
 
     h2h_cache: dict[tuple[str, str], dict] = {}
 
-    def _save_checkpoint(day: str, page: int):
+    def _save_checkpoint(day: str):
         if checkpoint:
             checkpoint.save({
                 "start_day":    start_day,
                 "end_day":      end_day,
                 "current_day":  day,
-                "current_page": page,
                 "total_events": total_events,
                 "league_id":    league_id,
             })
+            log.info("▶ Para retomar: python betsapi_corners_collector.py "
+                     "--mode historico --resume --token SEU_TOKEN")
 
     try:
         for day in tqdm(days, desc="Dias"):
-            # Pula dias já processados quando retomando
+            # Pula dias completamente anteriores ao ponto de retomada
             if resume_day and day < resume_day:
                 continue
 
-            start_page = resume_page if (resume_day and day == resume_day) else 1
-            resume_page = 1  # reseta para próximos dias
-
-            page = start_page
+            # Sempre começa da página 1 — collected_ids garante sem desperdício
+            page = 1
+            skipped_day = 0
             while True:
                 try:
                     resp = client.get_ended_events(day, page=page, league_id=league_id)
                     time.sleep(REQUEST_DELAY)
                 except RateLimitReached as exc:
-                    log.warning("Rate limit ao buscar eventos: %s", exc)
-                    _save_checkpoint(day, page)
+                    # auto_wait=False: salva checkpoint e encerra
+                    log.warning("Rate limit (sem auto_wait): %s", exc)
+                    _save_checkpoint(day)
                     saver.flush()
-                    log.info("▶ Para retomar: adicione --resume ao comando.")
-                    log.info("  Requests usados nesta sessão: %d / %d",
-                             client.request_count, client.max_requests)
                     return
 
                 events = resp.get("results", []) or []
@@ -866,6 +877,11 @@ def run_historico(
                 for event in events:
                     event_id = str(event.get("id", ""))
                     if not event_id:
+                        continue
+
+                    # Pula jogos já coletados — sem nenhuma chamada à API
+                    if event_id in collected_ids:
+                        skipped_day += 1
                         continue
 
                     meta = extract_event_metadata(event)
@@ -889,7 +905,7 @@ def run_historico(
                         time.sleep(REQUEST_DELAY)
                         panorama_row.update(parse_prematch_odds(odds_resp))
 
-                        # H2H (confronto direto) — com cache por par de times
+                        # H2H — com cache por par de times
                         pair_key = (meta["home_id"], meta["away_id"])
                         if pair_key not in h2h_cache:
                             h2h_resp = client.get_h2h(event_id)
@@ -898,22 +914,25 @@ def run_historico(
                         panorama_row.update(h2h_cache[pair_key])
 
                     except RateLimitReached as exc:
+                        # Só chega aqui se auto_wait=False
                         log.warning("Rate limit ao processar evento %s: %s", event_id, exc)
-                        _save_checkpoint(day, page)
+                        _save_checkpoint(day)
                         saver.flush()
-                        log.info("▶ Para retomar: adicione --resume ao comando.")
-                        log.info("  Requests usados nesta sessão: %d / %d",
-                                 client.request_count, client.max_requests)
                         return
 
                     saver.add_snapshots(snapshot_rows)
                     saver.add_panorama(panorama_row)
+                    collected_ids.add(event_id)   # marca como coletado
                     total_events += 1
 
                     if total_events % flush_every == 0:
                         saver.flush()
-                        log.info("  Progresso: %d jogos | requests: %d/%d",
-                                 total_events, client.request_count, client.max_requests)
+                        log.info("  Progresso: %d jogos | pulados: %d | requests: %d/%d",
+                                 total_events, skipped_day,
+                                 client.request_count, client.max_requests)
+
+                if skipped_day > 0:
+                    log.debug("Dia %s: %d jogos pulados (já coletados).", day, skipped_day)
 
                 # Paginação
                 pager = resp.get("pager", {}) or {}
@@ -924,9 +943,8 @@ def run_historico(
 
     except KeyboardInterrupt:
         log.info("Interrompido pelo usuário (Ctrl+C).")
-        _save_checkpoint(days[-1] if days else start_day, 1)
+        _save_checkpoint(days[-1] if days else start_day)
         saver.flush()
-        log.info("▶ Para retomar: adicione --resume ao comando.")
         return
 
     saver.flush()
