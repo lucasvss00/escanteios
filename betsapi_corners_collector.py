@@ -1116,7 +1116,11 @@ def parse_args():
 def main():
     args = parse_args()
 
-    client = BetsAPIClient(token=args.token, max_requests=args.max_requests)
+    client = BetsAPIClient(
+        token=args.token,
+        max_requests=args.max_requests,
+        auto_wait=not args.no_auto_wait,
+    )
     saver  = DataSaver(output_dir=args.output, save_csv=not args.no_csv)
 
     if args.mode == "historico":
