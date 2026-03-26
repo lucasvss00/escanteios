@@ -399,6 +399,13 @@ def build_panorama_row(event_id: str, meta: dict, event_view: dict,
     tackles_h, tackles_a = s("tackles")
     ball_safe_h, ball_safe_a = s("ball_safe")
 
+    # Fallback: se a API (/event/view) não forneceu stats de escanteios,
+    # usa o último valor dos snapshots (que vêm do stats_trend)
+    if corners_h is None and snapshot_rows:
+        corners_h = _safe_last(snapshot_rows, "corners_home")
+    if corners_a is None and snapshot_rows:
+        corners_a = _safe_last(snapshot_rows, "corners_away")
+
     row = {
         "event_id":         event_id,
         "league_id":        meta["league_id"],
