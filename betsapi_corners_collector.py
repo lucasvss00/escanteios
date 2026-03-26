@@ -283,8 +283,10 @@ def parse_stats_trend(raw_trend: list, event_id: str, meta: dict,
 
     for minute_idx, snapshot in enumerate(raw_trend):
         row = {
-            "event_id":    event_id,
-            "minute":      minute_idx + 1,
+            "event_id":         event_id,
+            "minute":           minute_idx + 1,
+            "collection_source": source,
+            "collected_at":     datetime.utcnow().isoformat(),
             **{k: v for k, v in meta.items()},
         }
         # snapshot pode ser lista de listas ou dict — BetsAPI retorna lista
