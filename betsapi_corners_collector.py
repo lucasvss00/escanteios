@@ -1106,6 +1106,10 @@ def parse_args():
         "--max-requests", type=int, default=3500,
         help="Limite de requests por hora (padrão: 3500, plano Soccer API tem 3600)"
     )
+    parser.add_argument(
+        "--no-auto-wait", action="store_true",
+        help="Desativa pausa automática ao atingir rate limit — encerra e salva checkpoint"
+    )
     return parser.parse_args()
 
 
