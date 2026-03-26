@@ -680,10 +680,10 @@ def parse_inplay_corner_odds(odds_resp: dict) -> dict:
 def _fetch_event_data(
     client: "BetsAPIClient",
     event_id: str,
-) -> tuple[dict, dict, dict]:
+) -> tuple[dict, dict]:
     """
-    Opção 3 — dispara as 3 chamadas de API de um evento em paralelo.
-    Retorna (trend_resp, view_resp, odds_resp).
+    Opção 3 — dispara as 2 chamadas de API de um evento em paralelo.
+    Retorna (trend_resp, view_resp).
     """
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         f_trend = pool.submit(client.get_stats_trend,    event_id)
