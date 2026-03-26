@@ -984,7 +984,10 @@ def run_historico(
                 page += 1
 
             # --- Resumo do dia ---
+            # max(0,...) protege contra reset de janela que zera request_count
             day_req_used = client.request_count - day_requests
+            if day_req_used < 0:
+                day_req_used += client.max_requests  # janela resetou durante o dia
             print(f"└─ {day_new} coletados  {day_skipped} pulados  "
                   f"{day_req_used} requests neste dia\n")
 
