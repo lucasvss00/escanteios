@@ -1174,6 +1174,10 @@ def parse_args():
         "--max-games", type=int, default=None,
         help="Para após coletar N jogos novos (útil para testes rápidos)"
     )
+    parser.add_argument(
+        "--exclude-esports", action="store_true",
+        help="Pula ligas de esports/virtual/fantasy (ativa filtro automático)"
+    )
     return parser.parse_args()
 
 
