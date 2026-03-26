@@ -726,13 +726,22 @@ class DataSaver:
         self.panoramas.append(row)
 
     def flush(self):
-        """Grava tudo no disco mesclando com dados existentes (safe para --resume)."""
+        """
+        Grava buffer no disco, mescla com dados existentes e limpa o buffer.
+
+        Limpar o buffer após salvar garante:
+          - Memória constante (não cresce com o tempo de sessão)
+          - Cada flush é rápido (só os N jogos novos, não todos desde o início)
+          - Dados já persistidos no Parquet não precisam ser re-escritos
+        """
         self._save_df(self.snapshots, "snapshots_por_minuto",
                       dedup_cols=["event_id", "minute"])
         self._save_df(self.panoramas, "panorama_jogos",
                       dedup_cols=["event_id"])
-        log.info("Dados salvos → %s (%d snapshots em buffer, %d jogos em buffer)",
-                 self.out, len(self.snapshots), len(self.panoramas))
+        log.info("💾 Salvo → %d snapshots + %d jogos gravados em disco.",
+                 len(self.snapshots), len(self.panoramas))
+        self.snapshots.clear()
+        self.panoramas.clear()
 
     def _save_df(self, data: list[dict], name: str, dedup_cols: list[str]):
         if not data:
