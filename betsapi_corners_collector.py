@@ -66,7 +66,7 @@ BASE_URL = "https://api.b365api.com"
 SPORT_ID = 1          # Futebol
 MAX_RETRIES = 3
 RETRY_DELAY = 5       # segundos entre tentativas
-REQUEST_DELAY = 0.35  # delay entre requests para respeitar rate limit
+REQUEST_DELAY = 1.0   # delay entre requests — 3600 req/hora = 1 req/s (plano Soccer API)
 
 
 # ---------------------------------------------------------------------------
