@@ -162,7 +162,6 @@ class BetsAPIClient:
                 resp = self.session.get(url, params=params, timeout=15)
                 resp.raise_for_status()
                 data = resp.json()
-                self.request_count += 1
                 if data.get("success") == 1:
                     return data
                 log.warning("API retornou success=0 em %s: %s", endpoint, data.get("error", ""))
