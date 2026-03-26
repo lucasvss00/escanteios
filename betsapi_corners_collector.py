@@ -1238,6 +1238,7 @@ def main():
             league_id=args.league_id,
             checkpoint=checkpoint,
             resume=args.resume,
+            max_games=args.max_games,
         )
 
     elif args.mode == "live":
