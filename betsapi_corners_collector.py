@@ -84,17 +84,22 @@ class RateLimitReached(Exception):
 class BetsAPIClient:
     """Wrapper simples para a BetsAPI com retry automático e controle de rate limit."""
 
-    def __init__(self, token: str, max_requests: int = 3500):
-        self.token = token
-        self.session = requests.Session()
+    def __init__(self, token: str, max_requests: int = 3500, auto_wait: bool = True):
+        self.token        = token
+        self.session      = requests.Session()
         self.session.headers.update({"X-API-TOKEN": token})
-        self.max_requests  = max_requests   # limite por janela de 1h
+        self.max_requests = max_requests   # limite por janela de 1h
+        self.auto_wait    = auto_wait      # pausa automática ao atingir o limite
         self.request_count = 0
         self.window_start  = datetime.utcnow()
 
     @property
     def requests_remaining(self) -> int:
         return max(0, self.max_requests - self.request_count)
+
+    def seconds_until_reset(self) -> int:
+        elapsed = (datetime.utcnow() - self.window_start).total_seconds()
+        return max(0, int(3600 - elapsed))
 
     def _reset_window_if_needed(self):
         elapsed = (datetime.utcnow() - self.window_start).total_seconds()
@@ -106,13 +111,33 @@ class BetsAPIClient:
 
     def _check_rate_limit(self):
         self._reset_window_if_needed()
-        if self.request_count >= self.max_requests:
+        if self.request_count < self.max_requests:
+            return  # dentro do limite, ok
+
+        if self.auto_wait:
+            # Calcula tempo restante + 15s de margem
+            wait_sec = self.seconds_until_reset() + 15
+            log.info(
+                "⏸  Rate limit atingido (%d/%d requests). "
+                "Aguardando %d min %d s para a janela resetar...",
+                self.request_count, self.max_requests,
+                wait_sec // 60, wait_sec % 60,
+            )
+            for i in range(1, wait_sec + 1):
+                time.sleep(1)
+                if i % 300 == 0:   # log a cada 5 minutos
+                    log.info("  Aguardando... %d min restantes.", (wait_sec - i) // 60)
+            # Reseta janela e continua normalmente
+            self.request_count = 0
+            self.window_start  = datetime.utcnow()
+            log.info("▶  Janela resetada. Retomando coleta...")
+        else:
             elapsed  = (datetime.utcnow() - self.window_start).total_seconds()
-            wait_sec = max(0, int(3600 - elapsed))
+            wait_sec = self.seconds_until_reset()
             raise RateLimitReached(
                 f"Limite de {self.max_requests} requests atingido "
-                f"(janela atual: {elapsed:.0f}s). "
-                f"Próxima janela em ~{wait_sec}s."
+                f"(janela: {elapsed:.0f}s). "
+                f"Próxima janela em ~{wait_sec}s. Use --resume para retomar."
             )
 
     def _get(self, endpoint: str, params: dict = None) -> dict:
