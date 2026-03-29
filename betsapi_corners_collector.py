@@ -88,6 +88,10 @@ class BetsAPIClient:
     def __init__(self, token: str, max_requests: int = 3500, auto_wait: bool = True):
         self.token        = token
         self.session      = requests.Session()
+        # Pool de conexões maior para suportar workers paralelos
+        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
         self.session.headers.update({"X-API-TOKEN": token})
         self.max_requests = max_requests   # limite por janela de 1h
         self.auto_wait    = auto_wait      # pausa automática ao atingir o limite
