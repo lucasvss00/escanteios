@@ -89,7 +89,7 @@ class BetsAPIClient:
         self.token        = token
         self.session      = requests.Session()
         # Pool de conexões maior para suportar workers paralelos
-        adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
+        adapter = requests.adapters.HTTPAdapter(pool_connections=50, pool_maxsize=50)
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
         self.session.headers.update({"X-API-TOKEN": token})
