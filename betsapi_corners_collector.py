@@ -1272,8 +1272,13 @@ def parse_args():
     parser.add_argument(
         "--workers", type=int, default=1,
         help="Número de eventos processados em paralelo (padrão: 1). "
-             "Cada worker dispara 3 requests simultâneos (stats_trend + event_view + prematch_odds). "
-             "Exemplo: --workers 4 processa ~4× mais rápido sem ultrapassar o rate limit."
+             "Cada worker dispara 2 requests (stats_trend + event_view). "
+             "Exemplo: --workers 10 processa ~10× mais rápido sem ultrapassar o rate limit."
+    )
+    parser.add_argument(
+        "--flush-every", type=int, default=100,
+        help="Salva no disco a cada N novos jogos (padrão: 100). "
+             "Valores menores aumentam a frequência de I/O no Parquet."
     )
     return parser.parse_args()
 
