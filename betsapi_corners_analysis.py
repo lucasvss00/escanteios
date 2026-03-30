@@ -602,7 +602,7 @@ try:
 
         preds = model.predict(X_test)
         mae  = mean_absolute_error(y_test, preds)
-        rmse = root_mean_squared_error(y_test, preds)
+        rmse = mean_squared_error(y_test, preds) ** 0.5
         print(f"\n  MAE  : {mae:.3f} escanteios")
         print(f"  RMSE : {rmse:.3f} escanteios")
 
