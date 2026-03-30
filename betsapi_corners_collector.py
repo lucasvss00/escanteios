@@ -1084,6 +1084,7 @@ def run_historico(
                     if max_games and session_new >= max_games:
                         print(f"\n  🏁 --max-games {max_games} atingido — encerrando.")
                         saver.flush()
+                        saver.finalize()
                         _print_session_summary(session_new, session_skip, total_events, client)
                         return
 
