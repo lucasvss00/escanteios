@@ -512,6 +512,64 @@ df_features["target_corners_remaining"] = df_features["target_corners_remaining"
 print(f"\nApós limpeza: {len(df_features):,} amostras")
 
 # %%
+# =============================================================================
+# 4.5 TARGET ENCODING (liga e times)
+#
+# Substitui IDs categóricos pela média suavizada do target.
+# Smoothing Bayesiano: times/ligas com poucos jogos são puxados para a média global.
+# =============================================================================
+
+class TargetEncoderSmoothed:
+    """Target encoding com smoothing Bayesiano para categorias de alta cardinalidade."""
+
+    def __init__(self, cols: list[str], target_col: str, smoothing: int = 10):
+        self.cols = cols
+        self.target_col = target_col
+        self.smoothing = smoothing
+        self.encodings_: dict[str, dict] = {}
+        self.global_mean_: float = 0.0
+
+    def fit(self, df: pd.DataFrame) -> "TargetEncoderSmoothed":
+        self.global_mean_ = df[self.target_col].mean()
+        for col in self.cols:
+            if col not in df.columns:
+                continue
+            stats = df.groupby(col)[self.target_col].agg(["mean", "count"])
+            smooth = stats["count"] / (stats["count"] + self.smoothing)
+            stats["encoded"] = smooth * stats["mean"] + (1 - smooth) * self.global_mean_
+            self.encodings_[col] = stats["encoded"].to_dict()
+        return self
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        for col in self.cols:
+            new_col = f"{col}_target_enc"
+            mapping = self.encodings_.get(col, {})
+            df[new_col] = df[col].map(mapping).fillna(self.global_mean_)
+        return df
+
+
+ENCODE_COLS = ["league_id", "home_team", "away_team"]
+# Apenas usa colunas que existem no dataset
+ENCODE_COLS = [c for c in ENCODE_COLS if c in df_features.columns]
+
+if ENCODE_COLS:
+    print("\nAplicando target encoding para:", ENCODE_COLS)
+    target_encoder = TargetEncoderSmoothed(
+        cols=ENCODE_COLS,
+        target_col="target_corners_total",
+        smoothing=10,
+    )
+    target_encoder.fit(df_features)
+    df_features = target_encoder.transform(df_features)
+    for col in ENCODE_COLS:
+        enc_col = f"{col}_target_enc"
+        if enc_col in df_features.columns:
+            print(f"  {enc_col}: min={df_features[enc_col].min():.2f}  "
+                  f"max={df_features[enc_col].max():.2f}  "
+                  f"mean={df_features[enc_col].mean():.2f}")
+
+# %%
 print("\n--- Features: correlação com target_corners_total ---")
 num_cols = df_features.select_dtypes(include=[np.number]).columns.tolist()
 corr = (
