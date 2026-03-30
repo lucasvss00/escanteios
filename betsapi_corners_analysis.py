@@ -531,27 +531,9 @@ try:
         "shots_on_target_home", "shots_on_target_away",
         "shots_off_target_home", "shots_off_target_away",
         "shots_on_target_diff",
-        # Cartões e faltas
-        "yellow_cards_home", "yellow_cards_away",
-        "red_cards_home", "red_cards_away",
-        "fouls_home", "fouls_away",
-        # Saves, offsides, goal kicks
-        "saves_home", "saves_away",
-        "offsides_home", "offsides_away",
-        "goal_kicks_home", "goal_kicks_away",
         # Placar e contexto
         "score_home", "score_away",
         "score_diff", "total_red_cards", "red_card_diff",
-        # Odds pré-jogo
-        "corners_line", "corners_over_odds", "corners_under_odds",
-        "asian_corners_line",
-        "odds_home_win", "odds_draw", "odds_away_win",
-        "goals_line", "goals_over_odds", "goals_under_odds",
-        "btts_yes_odds", "btts_no_odds",
-        # H2H
-        "h2h_total_games", "h2h_avg_corners_total",
-        "h2h_avg_corners_home", "h2h_avg_corners_away",
-        "h2h_avg_goals_total",
         # Histórico dos times
         "hist_home_corners_avg", "hist_away_corners_avg",
         "hist_home_corners_scored_avg", "hist_away_corners_scored_avg",
@@ -560,14 +542,13 @@ try:
         "hist_home_dangerous_attacks_avg", "hist_away_dangerous_attacks_avg",
         "hist_home_goals_avg", "hist_away_goals_avg",
         "hist_home_games", "hist_away_games",
-        "days_rest_home", "days_rest_away",
         # Liga
         "league_avg_corners",
         # Temporais
         "day_of_week", "hour_of_day", "month", "is_weekend",
     ]
 
-    # Filtra apenas features que existem no dataset (coleta pode não ter todos)
+    # Filtra apenas features que existem no dataset
     available_cols = [c for c in FEATURE_COLS if c in df_features.columns]
     missing_cols = [c for c in FEATURE_COLS if c not in df_features.columns]
     if missing_cols:
@@ -575,10 +556,34 @@ try:
         for c in missing_cols:
             print(f"    - {c}")
 
+    # Remove colunas 100% NaN (não coletadas pela API)
+    null_pcts = df_features[available_cols].isnull().mean()
+    cols_all_null = [c for c in available_cols if null_pcts[c] >= 0.99]
+    if cols_all_null:
+        print(f"  Removendo {len(cols_all_null)} colunas ≥99% NaN:")
+        for c in cols_all_null:
+            print(f"    - {c} ({null_pcts[c]*100:.0f}%)")
+        available_cols = [c for c in available_cols if c not in cols_all_null]
+
     TARGET = "target_corners_total"
 
-    df_model = df_features[available_cols + [TARGET]].dropna()
-    print(f"\n  Amostras para treino (após dropna): {len(df_model):,}")
+    # Preenche NaN com valores neutros em vez de dropar linhas inteiras:
+    #   - Features históricas/liga (time novo, sem histórico) → mediana da coluna
+    #   - Features ao vivo com NaN pontual → 0
+    df_model = df_features[available_cols + [TARGET]].copy()
+    df_model = df_model.dropna(subset=[TARGET])  # target é obrigatório
+
+    fill_with_median = [c for c in available_cols if c.startswith(("hist_", "league_"))]
+    fill_with_zero   = [c for c in available_cols if c not in fill_with_median]
+
+    for c in fill_with_median:
+        if c in df_model.columns:
+            df_model[c] = df_model[c].fillna(df_model[c].median())
+    for c in fill_with_zero:
+        if c in df_model.columns:
+            df_model[c] = df_model[c].fillna(0)
+
+    print(f"\n  Amostras para treino: {len(df_model):,}")
     print(f"  Features utilizadas: {len(available_cols)}")
 
     if len(df_model) < 50:
