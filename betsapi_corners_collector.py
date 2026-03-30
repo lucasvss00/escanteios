@@ -803,8 +803,13 @@ class CheckpointManager:
 class DataSaver:
     """
     Mantém dois buffers em memória e salva em Parquet + CSV.
-    Ao gravar, mescla com dados já existentes no disco e deduplica por event_id,
-    garantindo segurança em caso de retomada com --resume.
+
+    Estratégia de I/O em duas fases:
+      flush()    → append-only: grava part files pequenos (O(n_novo), instantâneo)
+      finalize() → merge: lê parts + arquivo principal, deduplica, escreve final
+
+    Isso evita reler o dataset inteiro a cada flush (que ficava cada vez mais
+    lento conforme o Parquet crescia).
     """
 
     def __init__(self, output_dir: str, save_csv: bool = True):
@@ -813,6 +818,9 @@ class DataSaver:
         self.save_csv = save_csv
         self.snapshots: list[dict] = []
         self.panoramas: list[dict] = []
+        self._part_counter = 0
+        self._parts_dir = self.out / "_parts"
+        self._parts_dir.mkdir(exist_ok=True)
 
     def add_snapshots(self, rows: list[dict]):
         self.snapshots.extend(rows)
@@ -822,56 +830,79 @@ class DataSaver:
 
     def flush(self):
         """
-        Grava buffer no disco, mescla com dados existentes e limpa o buffer.
-
-        Limpar o buffer após salvar garante:
-          - Memória constante (não cresce com o tempo de sessão)
-          - Cada flush é rápido (só os N jogos novos, não todos desde o início)
-          - Dados já persistidos no Parquet não precisam ser re-escritos
+        Append-only: grava buffers como part files separados.
+        Não lê nada do disco — custo é O(n_novo), independente do tamanho total.
         """
-        self._save_df(self.snapshots, "snapshots_por_minuto",
-                      dedup_cols=["event_id", "minute"])
-        self._save_df(self.panoramas, "panorama_jogos",
-                      dedup_cols=["event_id"])
+        self._write_part(self.snapshots, "snapshots_por_minuto")
+        self._write_part(self.panoramas, "panorama_jogos")
         log.info("💾 Salvo → %d snapshots + %d jogos gravados em disco.",
                  len(self.snapshots), len(self.panoramas))
         self.snapshots.clear()
         self.panoramas.clear()
 
-    def _save_df(self, data: list[dict], name: str, dedup_cols: list[str]):
+    def _write_part(self, data: list[dict], name: str):
+        """Escreve um part file numerado no diretório _parts."""
         if not data:
             return
-        df_new = pd.DataFrame(data)
-        pq_path = self.out / f"{name}.parquet"
+        self._part_counter += 1
+        part_path = self._parts_dir / f"{name}_part{self._part_counter:05d}.parquet"
+        pd.DataFrame(data).to_parquet(part_path, index=False)
 
-        # Mescla com dados existentes e deduplica (mantém o mais recente)
+    def finalize(self):
+        """
+        Merge final: lê todos os part files + arquivo principal existente,
+        deduplica e escreve o arquivo final consolidado.
+        Chamado uma vez no final da coleta (ou em Ctrl+C / rate limit).
+        """
+        self._merge("snapshots_por_minuto", dedup_cols=["event_id", "minute"])
+        self._merge("panorama_jogos",       dedup_cols=["event_id"])
+
+    def _merge(self, name: str, dedup_cols: list[str]):
+        """Consolida parts + arquivo principal, deduplica e limpa parts."""
+        import glob as glob_mod
+        pattern = str(self._parts_dir / f"{name}_part*.parquet")
+        part_files = sorted(glob_mod.glob(pattern))
+
+        if not part_files:
+            return  # nada a consolidar
+
+        # Lê todos os parts
+        dfs = [pd.read_parquet(p) for p in part_files]
+        df_new = pd.concat(dfs, ignore_index=True)
+
+        # Mescla com arquivo principal existente
+        pq_path = self.out / f"{name}.parquet"
         if pq_path.exists():
             try:
                 df_existing = pd.read_parquet(pq_path)
-                df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-                valid_dedup = [c for c in dedup_cols if c in df_combined.columns]
-                if valid_dedup:
-                    # Deduplicação inteligente: prefere "historico" sobre "live"
-                    # quando o mesmo event_id existir em ambas as origens
-                    if "collection_source" in df_combined.columns:
-                        source_order = {"live": 0, "historico": 1}
-                        df_combined["_src_order"] = (
-                            df_combined["collection_source"]
-                            .map(source_order)
-                            .fillna(0)
-                        )
-                        df_combined = df_combined.sort_values("_src_order")
-                        df_combined = df_combined.drop(columns=["_src_order"])
-                    df_combined = df_combined.drop_duplicates(
-                        subset=valid_dedup, keep="last"
-                    ).reset_index(drop=True)
-                df_new = df_combined
+                df_new = pd.concat([df_existing, df_new], ignore_index=True)
             except Exception as exc:
-                log.warning("Erro ao mesclar parquet existente (%s): %s — sobrescrevendo.", name, exc)
+                log.warning("Erro ao ler parquet existente (%s): %s — só parts serão usados.", name, exc)
+
+        # Deduplicação inteligente: prefere "historico" sobre "live"
+        valid_dedup = [c for c in dedup_cols if c in df_new.columns]
+        if valid_dedup:
+            if "collection_source" in df_new.columns:
+                source_order = {"live": 0, "historico": 1}
+                df_new["_src_order"] = (
+                    df_new["collection_source"]
+                    .map(source_order)
+                    .fillna(0)
+                )
+                df_new = df_new.sort_values("_src_order")
+                df_new = df_new.drop(columns=["_src_order"])
+            df_new = df_new.drop_duplicates(
+                subset=valid_dedup, keep="last"
+            ).reset_index(drop=True)
 
         df_new.to_parquet(pq_path, index=False)
         if self.save_csv:
             df_new.to_csv(self.out / f"{name}.csv", index=False)
+
+        # Limpa parts consumidos
+        for p in part_files:
+            os.remove(p)
+        log.info("🔀 Merge finalizado: %s → %d linhas consolidadas.", name, len(df_new))
 
 
 # ---------------------------------------------------------------------------
