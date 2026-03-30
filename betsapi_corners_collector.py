@@ -1237,6 +1237,7 @@ def run_live(
     except KeyboardInterrupt:
         log.info("Interrompido pelo usuário.")
         saver.flush()
+        saver.finalize()
 
 
 # ---------------------------------------------------------------------------
