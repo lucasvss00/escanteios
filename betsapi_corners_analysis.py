@@ -419,6 +419,39 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
 
             records.append(feat)
 
+    # --- Pós-processamento: features de momentum (deltas entre snapshots) ---
+    # Para cada jogo, calcula variações entre snapshots consecutivos.
+    # Minuto 15 fica sem deltas (sem snapshot anterior).
+    MOMENTUM_COLS = [
+        "corners_total_so_far", "corners_home_so_far", "corners_away_so_far",
+        "corners_rate_per_min", "dangerous_attacks_home", "dangerous_attacks_away",
+        "attacks_home", "attacks_away",
+        "shots_on_target_home", "shots_on_target_away",
+        "possession_home_avg",
+    ]
+
+    # Agrupa records por event_id para calcular deltas
+    from collections import defaultdict
+    event_records: dict[str, list[int]] = defaultdict(list)
+    for i, rec in enumerate(records):
+        event_records[rec["event_id"]].append(i)
+
+    for eid, indices in event_records.items():
+        # Ordena por snap_minute
+        indices_sorted = sorted(indices, key=lambda i: records[i]["snap_minute"])
+        for j in range(len(indices_sorted)):
+            idx = indices_sorted[j]
+            if j == 0:
+                # Primeiro snapshot (min 15): sem deltas
+                for col in MOMENTUM_COLS:
+                    records[idx][f"delta_{col}"] = None
+            else:
+                prev_idx = indices_sorted[j - 1]
+                for col in MOMENTUM_COLS:
+                    curr_val = records[idx].get(col) or 0
+                    prev_val = records[prev_idx].get(col) or 0
+                    records[idx][f"delta_{col}"] = round(curr_val - prev_val, 4)
+
     return pd.DataFrame(records)
 
 

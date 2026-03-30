@@ -41,7 +41,8 @@
       "Bash(cmd /c \"C:\\\\Users\\\\Lucas\\\\miniconda3\\\\envs\\\\Betsapi\\\\python.exe C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analisa_csv.py > C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analise_output.txt 2>&1 && type C:\\\\Users\\\\Lucas\\\\Desktop\\\\FIFA\\\\escanteios\\\\analise_output.txt\")",
       "Bash(cmd /c type C:UsersLucasDesktopFIFAescanteiosanalise_output.txt)",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\)\")",
-      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\)\")"
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\)\")",
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', doraise=True\\)\")"
     ]
   }
 }
