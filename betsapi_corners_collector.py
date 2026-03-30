@@ -1028,6 +1028,7 @@ def run_historico(
                     log.warning("Rate limit (auto_wait=False): %s", exc)
                     _save_checkpoint(day)
                     saver.flush()
+                    saver.finalize()
                     return
 
                 events = resp.get("results", []) or []
