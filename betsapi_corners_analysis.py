@@ -508,7 +508,7 @@ print("\n--- Treinando modelo de exemplo (XGBoost) ---")
 
 try:
     from sklearn.model_selection import train_test_split
-    from sklearn.metrics import mean_absolute_error, root_mean_squared_error
+    from sklearn.metrics import mean_absolute_error, mean_squared_error
     import xgboost as xgb
 
     FEATURE_COLS = [
