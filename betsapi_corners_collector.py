@@ -686,13 +686,14 @@ def _fetch_event_data(
     event_id: str,
 ) -> tuple[dict, dict]:
     """
-    Opção 3 — dispara as 2 chamadas de API de um evento em paralelo.
-    Retorna (trend_resp, view_resp).
+    Busca trend e view sequencialmente dentro do worker.
+    O paralelismo real vem dos múltiplos workers em _collect_events —
+    criar um pool interno por evento duplicava os requests simultâneos
+    e sobrecarregava a API com timeouts.
     """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        f_trend = pool.submit(client.get_stats_trend,    event_id)
-        f_view  = pool.submit(client.get_event_view,     event_id)
-        return f_trend.result(), f_view.result()
+    trend_resp = client.get_stats_trend(event_id)
+    view_resp  = client.get_event_view(event_id)
+    return trend_resp, view_resp
 
 
 def _process_one_event(
