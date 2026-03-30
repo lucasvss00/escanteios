@@ -1118,10 +1118,12 @@ def run_historico(
         print(f"  Dia atual: {current_day}")
         _save_checkpoint(current_day)  # BUG FIX: usa current_day rastreado, não days[-1]
         saver.flush()
+        saver.finalize()
         _print_session_summary(session_new, session_skip, total_events, client)
         return
 
     saver.flush()
+    saver.finalize()
     if checkpoint:
         checkpoint.clear()
 
