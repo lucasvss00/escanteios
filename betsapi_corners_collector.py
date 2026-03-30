@@ -893,7 +893,7 @@ def run_historico(
     start_day: str,
     end_day: str,
     league_id: Optional[int] = None,
-    flush_every: int = 20,
+    flush_every: int = 100,
     checkpoint: Optional[CheckpointManager] = None,
     resume: bool = False,
     max_games: Optional[int] = None,
