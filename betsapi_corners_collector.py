@@ -1345,6 +1345,7 @@ def main():
             start_day=start_day,
             end_day=end_day,
             league_id=args.league_id,
+            flush_every=args.flush_every,
             checkpoint=checkpoint,
             resume=args.resume,
             max_games=args.max_games,
