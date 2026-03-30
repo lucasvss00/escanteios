@@ -1065,6 +1065,7 @@ def run_historico(
                     log.warning("Rate limit: %s", exc)
                     _save_checkpoint(day)
                     saver.flush()
+                    saver.finalize()
                     return
 
                 # Fase 3: atualiza estado (sempre serial)
