@@ -955,7 +955,7 @@ def run_historico(
         ckpt_data  = checkpoint.load()
         resume_day = ckpt_data.get("current_day")
 
-    # --- Carrega event_ids já coletados (sempre ativo) ---
+    # --- Carrega event_ids já coletados (arquivo principal + parts pendentes) ---
     collected_ids: set[str] = set()
     pano_path = saver.out / "panorama_jogos.parquet"
     if pano_path.exists():
@@ -964,6 +964,14 @@ def run_historico(
             collected_ids = set(df_ex["event_id"].astype(str))
         except Exception as exc:
             log.warning("Erro ao carregar IDs existentes: %s", exc)
+    # Parts pendentes de sessão anterior (interrompida antes do finalize)
+    import glob as glob_mod
+    for part_file in glob_mod.glob(str(saver._parts_dir / "panorama_jogos_part*.parquet")):
+        try:
+            df_part = pd.read_parquet(part_file, columns=["event_id"])
+            collected_ids.update(df_part["event_id"].astype(str))
+        except Exception:
+            pass
 
     # total_events reflete o estado real (jogos já no Parquet + novos desta sessão)
     total_events   = len(collected_ids)
