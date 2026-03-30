@@ -593,18 +593,28 @@ print(f"\nDataset de features salvo em:\n  {out_pq}\n  {out_csv}")
 
 # %%
 # =============================================================================
-# 6. EXEMPLO RÁPIDO DE MODELO (XGBoost)
+# 6. TREINO DE MODELOS — PIPELINE COMPLETO
+#
+# Melhorias sobre o modelo baseline:
+#   1. Modelos separados por minuto de snapshot (15, 30, 45, 60, 75)
+#   2. Quantile regression (P10, P50, P90) para intervalos de confiança
+#   3. Calibração isotônica para corrigir viés nos extremos
+#   4. Features de momentum (delta entre snapshots) — já adicionadas na seção 3
+#   5. Target encoding (liga/time) — já adicionado na seção 4.5
 # =============================================================================
-print("\n--- Treinando modelo de exemplo (XGBoost) ---")
+print("\n" + "═" * 62)
+print("  TREINANDO MODELOS AVANÇADOS")
+print("═" * 62)
 
 try:
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import mean_absolute_error, mean_squared_error
+    from sklearn.isotonic import IsotonicRegression
     import xgboost as xgb
+    import joblib
 
-    FEATURE_COLS = [
-        # Tempo do jogo
-        "snap_minute",
+    # --- Features base (usadas por todos os minutos) ---
+    BASE_FEATURE_COLS = [
         # Escanteios ao vivo
         "corners_home_so_far", "corners_away_so_far", "corners_total_so_far",
         "corners_rate_per_min",
@@ -633,85 +643,243 @@ try:
         "hist_home_dangerous_attacks_avg", "hist_away_dangerous_attacks_avg",
         "hist_home_goals_avg", "hist_away_goals_avg",
         "hist_home_games", "hist_away_games",
+        # Target encoding
+        "league_id_target_enc", "home_team_target_enc", "away_team_target_enc",
         # Liga
         "league_avg_corners",
         # Temporais
         "day_of_week", "hour_of_day", "month", "is_weekend",
     ]
 
-    # Filtra apenas features que existem no dataset
-    available_cols = [c for c in FEATURE_COLS if c in df_features.columns]
-    missing_cols = [c for c in FEATURE_COLS if c not in df_features.columns]
-    if missing_cols:
-        print(f"  Aviso: {len(missing_cols)} features ausentes no dataset (serão ignoradas):")
-        for c in missing_cols:
-            print(f"    - {c}")
-
-    # Remove colunas 100% NaN (não coletadas pela API)
-    null_pcts = df_features[available_cols].isnull().mean()
-    cols_all_null = [c for c in available_cols if null_pcts[c] >= 0.99]
-    if cols_all_null:
-        print(f"  Removendo {len(cols_all_null)} colunas ≥99% NaN:")
-        for c in cols_all_null:
-            print(f"    - {c} ({null_pcts[c]*100:.0f}%)")
-        available_cols = [c for c in available_cols if c not in cols_all_null]
+    # Features de momentum (só disponíveis para minutos > 15)
+    MOMENTUM_FEATURE_COLS = [
+        "delta_corners_total_so_far", "delta_corners_home_so_far",
+        "delta_corners_away_so_far", "delta_corners_rate_per_min",
+        "delta_dangerous_attacks_home", "delta_dangerous_attacks_away",
+        "delta_attacks_home", "delta_attacks_away",
+        "delta_shots_on_target_home", "delta_shots_on_target_away",
+        "delta_possession_home_avg",
+    ]
 
     TARGET = "target_corners_total"
 
-    # Preenche NaN com valores neutros em vez de dropar linhas inteiras:
-    #   - Features históricas/liga (time novo, sem histórico) → mediana da coluna
-    #   - Features ao vivo com NaN pontual → 0
-    df_model = df_features[available_cols + [TARGET]].copy()
-    df_model = df_model.dropna(subset=[TARGET])  # target é obrigatório
+    def prepare_features(df: pd.DataFrame, feature_cols: list[str]) -> tuple[list[str], pd.DataFrame]:
+        """Filtra features existentes, remove ≥99% NaN, preenche NaN restantes."""
+        available = [c for c in feature_cols if c in df.columns]
 
-    fill_with_median = [c for c in available_cols if c.startswith(("hist_", "league_"))]
-    fill_with_zero   = [c for c in available_cols if c not in fill_with_median]
+        # Remove colunas quase vazias
+        null_pcts = df[available].isnull().mean()
+        available = [c for c in available if null_pcts[c] < 0.99]
 
-    for c in fill_with_median:
-        if c in df_model.columns:
-            df_model[c] = df_model[c].fillna(df_model[c].median())
-    for c in fill_with_zero:
-        if c in df_model.columns:
-            df_model[c] = df_model[c].fillna(0)
+        df_out = df[available + [TARGET]].copy()
+        df_out = df_out.dropna(subset=[TARGET])
 
-    print(f"\n  Amostras para treino: {len(df_model):,}")
-    print(f"  Features utilizadas: {len(available_cols)}")
+        # Preenche NaN: históricas/liga/encoding → mediana; ao vivo → 0
+        fill_med = [c for c in available if c.startswith(("hist_", "league_"))
+                    or c.endswith("_target_enc")]
+        fill_zero = [c for c in available if c not in fill_med]
 
-    if len(df_model) < 50:
-        print("  Dados insuficientes para treino. Colete mais jogos.")
-    else:
-        X = df_model[available_cols]
-        y = df_model[TARGET]
+        for c in fill_med:
+            df_out[c] = df_out[c].fillna(df_out[c].median())
+        for c in fill_zero:
+            df_out[c] = df_out[c].fillna(0)
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        return available, df_out
 
-        model = xgb.XGBRegressor(
-            n_estimators=300,
+    # --- Armazenamento de resultados e artefatos ---
+    all_metadata: dict = {"snapshot_minutes": SNAPSHOT_MINUTES, "models": {}}
+
+    print(f"\n  Dataset total: {len(df_features):,} amostras")
+    print(f"  Split: 60% treino / 20% calibração / 20% teste")
+
+    for snap_min in SNAPSHOT_MINUTES:
+        print(f"\n{'─' * 62}")
+        print(f"  ⚽ MINUTO {snap_min}")
+        print(f"{'─' * 62}")
+
+        df_min = df_features[df_features["snap_minute"] == snap_min].copy()
+
+        # Minuto 15 não tem momentum; demais sim
+        if snap_min == 15:
+            feat_cols = BASE_FEATURE_COLS
+        else:
+            feat_cols = BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS
+
+        available, df_clean = prepare_features(df_min, feat_cols)
+
+        if len(df_clean) < 100:
+            print(f"  ⚠ Dados insuficientes ({len(df_clean)} amostras). Pulando.")
+            continue
+
+        X = df_clean[available]
+        y = df_clean[TARGET]
+
+        # Split 3-way: treino (60%), calibração (20%), teste (20%)
+        X_trainval, X_test, y_trainval, y_test = train_test_split(
+            X, y, test_size=0.20, random_state=42
+        )
+        X_train, X_cal, y_train, y_cal = train_test_split(
+            X_trainval, y_trainval, test_size=0.25, random_state=42  # 0.25 × 0.80 = 0.20
+        )
+
+        print(f"  Amostras: treino={len(X_train):,}  cal={len(X_cal):,}  teste={len(X_test):,}")
+        print(f"  Features: {len(available)}")
+
+        # ==================================================================
+        # 6a. Modelo principal (regressão à média — squared error)
+        # ==================================================================
+        model_mean = xgb.XGBRegressor(
+            n_estimators=500,
             max_depth=6,
-            learning_rate=0.05,
+            learning_rate=0.03,
             subsample=0.8,
             colsample_bytree=0.8,
+            min_child_weight=5,
+            reg_alpha=0.1,
+            reg_lambda=1.0,
             random_state=42,
             verbosity=0,
+            early_stopping_rounds=30,
         )
-        model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
+        model_mean.fit(
+            X_train, y_train,
+            eval_set=[(X_cal, y_cal)],
+            verbose=False,
+        )
 
-        preds = model.predict(X_test)
-        mae  = mean_absolute_error(y_test, preds)
-        rmse = mean_squared_error(y_test, preds) ** 0.5
-        print(f"\n  MAE  : {mae:.3f} escanteios")
-        print(f"  RMSE : {rmse:.3f} escanteios")
+        # --- Métricas SEM calibração ---
+        preds_raw = model_mean.predict(X_test)
+        mae_raw  = mean_absolute_error(y_test, preds_raw)
+        rmse_raw = mean_squared_error(y_test, preds_raw) ** 0.5
 
-        # Importância de features
-        feat_imp = pd.Series(model.feature_importances_, index=available_cols)
-        print("\nTop 15 features mais importantes:")
-        print(feat_imp.sort_values(ascending=False).head(15).round(4).to_string())
+        # ==================================================================
+        # 6b. Calibração isotônica (corrige viés nos extremos)
+        # ==================================================================
+        preds_cal = model_mean.predict(X_cal)
+        calibrator = IsotonicRegression(y_min=0, y_max=35, out_of_bounds="clip")
+        calibrator.fit(preds_cal, y_cal)
 
-        # Salva modelo
-        import joblib
-        model_path = DATA_DIR / "modelo_corners_xgb.joblib"
-        joblib.dump(model, model_path)
-        print(f"\nModelo salvo em: {model_path}")
+        preds_calibrated = calibrator.predict(preds_raw)
+        mae_cal  = mean_absolute_error(y_test, preds_calibrated)
+        rmse_cal = mean_squared_error(y_test, preds_calibrated) ** 0.5
+
+        print(f"\n  Modelo principal (squared error):")
+        print(f"    Antes calibração : MAE={mae_raw:.3f}  RMSE={rmse_raw:.3f}")
+        print(f"    Após calibração  : MAE={mae_cal:.3f}  RMSE={rmse_cal:.3f}")
+
+        # Viés por faixa (após calibração)
+        for lo, hi in [(0, 5), (6, 8), (9, 11), (12, 15), (16, 30)]:
+            mask = (y_test >= lo) & (y_test <= hi)
+            if mask.sum() > 0:
+                bias = (preds_calibrated[mask] - y_test[mask].values).mean()
+                mae_f = mean_absolute_error(y_test[mask], preds_calibrated[mask])
+                print(f"    Faixa {lo:2d}-{hi:2d}: MAE={mae_f:.2f}  viés={bias:+.2f}  (n={mask.sum():,})")
+
+        # ==================================================================
+        # 6c. Quantile regression (P10, P50, P90)
+        # ==================================================================
+        quantile_models = {}
+        quantile_calibrators = {}
+
+        for q_name, q_alpha in [("q10", 0.10), ("q50", 0.50), ("q90", 0.90)]:
+            model_q = xgb.XGBRegressor(
+                objective="reg:quantileerror",
+                quantile_alpha=q_alpha,
+                n_estimators=300,
+                max_depth=6,
+                learning_rate=0.03,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                min_child_weight=5,
+                random_state=42,
+                verbosity=0,
+                early_stopping_rounds=30,
+            )
+            model_q.fit(
+                X_train, y_train,
+                eval_set=[(X_cal, y_cal)],
+                verbose=False,
+            )
+
+            # Calibração para quantile também
+            preds_q_cal = model_q.predict(X_cal)
+            cal_q = IsotonicRegression(y_min=0, y_max=35, out_of_bounds="clip")
+            cal_q.fit(preds_q_cal, y_cal)
+
+            quantile_models[q_name] = model_q
+            quantile_calibrators[q_name] = cal_q
+
+        # Avalia intervalo de confiança no teste
+        p10_test = quantile_calibrators["q10"].predict(quantile_models["q10"].predict(X_test))
+        p50_test = quantile_calibrators["q50"].predict(quantile_models["q50"].predict(X_test))
+        p90_test = quantile_calibrators["q90"].predict(quantile_models["q90"].predict(X_test))
+
+        coverage = ((y_test.values >= p10_test) & (y_test.values <= p90_test)).mean()
+        interval_width = (p90_test - p10_test).mean()
+        mae_p50 = mean_absolute_error(y_test, p50_test)
+
+        print(f"\n  Quantile regression:")
+        print(f"    P50 MAE       : {mae_p50:.3f}")
+        print(f"    Intervalo P10-P90: largura média = {interval_width:.1f} corners")
+        print(f"    Cobertura P10-P90: {coverage:.1%} (ideal: ~80%)")
+
+        # ==================================================================
+        # 6d. Feature importance (top 10)
+        # ==================================================================
+        feat_imp = pd.Series(model_mean.feature_importances_, index=available)
+        top10 = feat_imp.sort_values(ascending=False).head(10)
+        print(f"\n  Top 10 features:")
+        for i, (feat, val) in enumerate(top10.items(), 1):
+            print(f"    {i:2d}. {feat:<42s} {val:.4f}")
+
+        # ==================================================================
+        # 6e. Salva artefatos
+        # ==================================================================
+        joblib.dump(model_mean,  DATA_DIR / f"modelo_corners_xgb_min{snap_min}.joblib")
+        joblib.dump(calibrator,  DATA_DIR / f"calibrador_iso_min{snap_min}.joblib")
+
+        for q_name in ["q10", "q50", "q90"]:
+            joblib.dump(quantile_models[q_name],
+                        DATA_DIR / f"modelo_corners_xgb_min{snap_min}_{q_name}.joblib")
+            joblib.dump(quantile_calibrators[q_name],
+                        DATA_DIR / f"calibrador_iso_min{snap_min}_{q_name}.joblib")
+
+        all_metadata["models"][snap_min] = {
+            "features":       available,
+            "n_train":        len(X_train),
+            "n_cal":          len(X_cal),
+            "n_test":         len(X_test),
+            "mae_raw":        round(mae_raw, 4),
+            "mae_calibrated": round(mae_cal, 4),
+            "rmse_calibrated":round(rmse_cal, 4),
+            "mae_p50":        round(mae_p50, 4),
+            "coverage_80":    round(coverage, 4),
+            "interval_width": round(interval_width, 2),
+        }
+
+    # --- Salva target encoder e metadata ---
+    if ENCODE_COLS:
+        joblib.dump(target_encoder, DATA_DIR / "target_encoder.joblib")
+        print(f"\n  Target encoder salvo → {DATA_DIR / 'target_encoder.joblib'}")
+
+    joblib.dump(all_metadata, DATA_DIR / "modelo_corners_meta.joblib")
+    print(f"  Metadata salvo → {DATA_DIR / 'modelo_corners_meta.joblib'}")
+
+    # --- Resumo final ---
+    print(f"\n{'═' * 62}")
+    print(f"  RESUMO DOS MODELOS")
+    print(f"{'═' * 62}")
+    print(f"  {'Min':>4s}  {'MAE raw':>8s}  {'MAE cal':>8s}  {'MAE P50':>8s}  {'P10-P90':>8s}  {'Cobert':>7s}")
+    print(f"  {'─'*4}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*7}")
+    for m, info in all_metadata["models"].items():
+        print(f"  {m:>4d}  {info['mae_raw']:>8.3f}  {info['mae_calibrated']:>8.3f}  "
+              f"{info['mae_p50']:>8.3f}  {info['interval_width']:>7.1f}  "
+              f"{info['coverage_80']:>6.1%}")
+
+    n_models = len(all_metadata["models"]) * 4  # mean + q10 + q50 + q90
+    n_cals   = len(all_metadata["models"]) * 4
+    print(f"\n  Total: {n_models} modelos + {n_cals} calibradores + 1 encoder salvos")
+    print(f"  Diretório: {DATA_DIR}")
 
 except ImportError as e:
     print(f"  Pacote não instalado ({e}). Instale: pip install xgboost scikit-learn joblib")
