@@ -848,13 +848,12 @@ try:
         # 6e. Salva artefatos
         # ==================================================================
         joblib.dump(model_mean,  DATA_DIR / f"modelo_corners_xgb_min{snap_min}.joblib")
-        joblib.dump(calibrator,  DATA_DIR / f"calibrador_iso_min{snap_min}.joblib")
+        if use_calibration:
+            joblib.dump(calibrator,  DATA_DIR / f"calibrador_iso_min{snap_min}.joblib")
 
         for q_name in ["q10", "q50", "q90"]:
             joblib.dump(quantile_models[q_name],
                         DATA_DIR / f"modelo_corners_xgb_min{snap_min}_{q_name}.joblib")
-            joblib.dump(quantile_calibrators[q_name],
-                        DATA_DIR / f"calibrador_iso_min{snap_min}_{q_name}.joblib")
 
         all_metadata["models"][snap_min] = {
             "features":       available,
