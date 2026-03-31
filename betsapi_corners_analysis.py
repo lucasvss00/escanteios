@@ -829,9 +829,11 @@ try:
         above_p90 = (y_test.values > p90_test).mean()
 
         print(f"\n  Quantile regression:")
-        print(f"    P50 MAE       : {mae_p50:.3f}")
-        print(f"    Intervalo P10-P90: largura média = {interval_width:.1f} corners")
-        print(f"    Cobertura P10-P90: {coverage:.1%} (ideal: ~80%)")
+        print(f"    P50 MAE           : {mae_p50:.3f}")
+        print(f"    Intervalo P10-P90 : largura média = {interval_width:.1f} corners")
+        print(f"    Cobertura P10-P90 : {coverage:.1%} (ideal: ~80%)")
+        print(f"    Abaixo do P10     : {below_p10:.1%} (ideal: ~10%)")
+        print(f"    Acima do P90      : {above_p90:.1%} (ideal: ~10%)")
 
         # ==================================================================
         # 6d. Feature importance (top 10)
