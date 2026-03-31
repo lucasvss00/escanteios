@@ -882,15 +882,15 @@ try:
     print(f"\n{'═' * 62}")
     print(f"  RESUMO DOS MODELOS")
     print(f"{'═' * 62}")
-    print(f"  {'Min':>4s}  {'MAE raw':>8s}  {'MAE cal':>8s}  {'MAE P50':>8s}  {'P10-P90':>8s}  {'Cobert':>7s}")
-    print(f"  {'─'*4}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*8}  {'─'*7}")
+    print(f"  {'Min':>4s}  {'MAE best':>9s}  {'MAE P50':>8s}  {'P10-P90':>8s}  {'Cobert':>7s}  {'Cal?':>4s}")
+    print(f"  {'─'*4}  {'─'*9}  {'─'*8}  {'─'*8}  {'─'*7}  {'─'*4}")
     for m, info in all_metadata["models"].items():
-        print(f"  {m:>4d}  {info['mae_raw']:>8.3f}  {info['mae_calibrated']:>8.3f}  "
-              f"{info['mae_p50']:>8.3f}  {info['interval_width']:>7.1f}  "
-              f"{info['coverage_80']:>6.1%}")
+        cal_flag = "✓" if info["use_calibration"] else "✗"
+        print(f"  {m:>4d}  {info['mae_best']:>9.3f}  {info['mae_p50']:>8.3f}  "
+              f"{info['interval_width']:>7.1f}  {info['coverage_80']:>6.1%}  {cal_flag:>4s}")
 
     n_models = len(all_metadata["models"]) * 4  # mean + q10 + q50 + q90
-    n_cals   = len(all_metadata["models"]) * 4
+    n_cals   = sum(1 for info in all_metadata["models"].values() if info["use_calibration"])
     print(f"\n  Total: {n_models} modelos + {n_cals} calibradores + 1 encoder salvos")
     print(f"  Diretório: {DATA_DIR}")
 
