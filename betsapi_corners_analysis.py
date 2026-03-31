@@ -856,16 +856,18 @@ try:
                         DATA_DIR / f"modelo_corners_xgb_min{snap_min}_{q_name}.joblib")
 
         all_metadata["models"][snap_min] = {
-            "features":       available,
-            "n_train":        len(X_train),
-            "n_cal":          len(X_cal),
-            "n_test":         len(X_test),
-            "mae_raw":        round(mae_raw, 4),
-            "mae_calibrated": round(mae_cal, 4),
-            "rmse_calibrated":round(rmse_cal, 4),
-            "mae_p50":        round(mae_p50, 4),
-            "coverage_80":    round(coverage, 4),
-            "interval_width": round(interval_width, 2),
+            "features":         available,
+            "n_train":          len(X_train),
+            "n_cal":            len(X_cal),
+            "n_test":           len(X_test),
+            "mae_raw":          round(mae_raw, 4),
+            "mae_calibrated":   round(mae_cal, 4),
+            "use_calibration":  use_calibration,
+            "mae_best":         round(mae_best, 4),
+            "rmse_raw":         round(rmse_raw, 4),
+            "mae_p50":          round(mae_p50, 4),
+            "coverage_80":      round(coverage, 4),
+            "interval_width":   round(interval_width, 2),
         }
 
     # --- Salva target encoder e metadata ---
