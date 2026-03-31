@@ -42,7 +42,8 @@
       "Bash(cmd /c type C:UsersLucasDesktopFIFAescanteiosanalise_output.txt)",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\)\")",
       "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\)\")",
-      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', doraise=True\\)\")"
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', doraise=True\\)\")",
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import xgboost; print\\(xgboost.__version__\\)\")"
     ]
   }
 }

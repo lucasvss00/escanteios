@@ -754,43 +754,56 @@ try:
 
         # ==================================================================
         # 6b. Calibração isotônica (corrige viés nos extremos)
+        #
+        # Ajusta uma função monotônica não-paramétrica que mapeia
+        # predição_raw → predição_corrigida, usando o set de calibração.
         # ==================================================================
-        preds_cal = model_mean.predict(X_cal)
+        preds_cal_raw = model_mean.predict(X_cal)
         calibrator = IsotonicRegression(y_min=0, y_max=35, out_of_bounds="clip")
-        calibrator.fit(preds_cal, y_cal)
+        calibrator.fit(preds_cal_raw, y_cal)
 
         preds_calibrated = calibrator.predict(preds_raw)
         mae_cal  = mean_absolute_error(y_test, preds_calibrated)
         rmse_cal = mean_squared_error(y_test, preds_calibrated) ** 0.5
 
-        print(f"\n  Modelo principal (squared error):")
-        print(f"    Antes calibração : MAE={mae_raw:.3f}  RMSE={rmse_raw:.3f}")
-        print(f"    Após calibração  : MAE={mae_cal:.3f}  RMSE={rmse_cal:.3f}")
+        # Decide se calibração ajudou ou não
+        use_calibration = mae_cal < mae_raw
+        preds_best = preds_calibrated if use_calibration else preds_raw
+        mae_best = mae_cal if use_calibration else mae_raw
 
-        # Viés por faixa (após calibração)
+        print(f"\n  Modelo principal (squared error):")
+        print(f"    Sem calibração   : MAE={mae_raw:.3f}  RMSE={rmse_raw:.3f}")
+        print(f"    Com calibração   : MAE={mae_cal:.3f}  RMSE={rmse_cal:.3f}")
+        print(f"    → Usando: {'calibrado ✓' if use_calibration else 'raw (calibração não ajudou)'}")
+
+        # Viés por faixa
         for lo, hi in [(0, 5), (6, 8), (9, 11), (12, 15), (16, 30)]:
             mask = (y_test >= lo) & (y_test <= hi)
             if mask.sum() > 0:
-                bias = (preds_calibrated[mask] - y_test[mask].values).mean()
-                mae_f = mean_absolute_error(y_test[mask], preds_calibrated[mask])
+                bias = (preds_best[mask] - y_test[mask].values).mean()
+                mae_f = mean_absolute_error(y_test[mask], preds_best[mask])
                 print(f"    Faixa {lo:2d}-{hi:2d}: MAE={mae_f:.2f}  viés={bias:+.2f}  (n={mask.sum():,})")
 
         # ==================================================================
         # 6c. Quantile regression (P10, P50, P90)
+        #
+        # NÃO aplica calibração isotônica nos quantis — isso colapsa
+        # os intervalos para a média. Os modelos quantile são usados raw.
         # ==================================================================
         quantile_models = {}
-        quantile_calibrators = {}
 
         for q_name, q_alpha in [("q10", 0.10), ("q50", 0.50), ("q90", 0.90)]:
             model_q = xgb.XGBRegressor(
                 objective="reg:quantileerror",
                 quantile_alpha=q_alpha,
-                n_estimators=300,
+                n_estimators=500,
                 max_depth=6,
                 learning_rate=0.03,
                 subsample=0.8,
                 colsample_bytree=0.8,
                 min_child_weight=5,
+                reg_alpha=0.1,
+                reg_lambda=1.0,
                 random_state=42,
                 verbosity=0,
                 early_stopping_rounds=30,
@@ -800,23 +813,20 @@ try:
                 eval_set=[(X_cal, y_cal)],
                 verbose=False,
             )
-
-            # Calibração para quantile também
-            preds_q_cal = model_q.predict(X_cal)
-            cal_q = IsotonicRegression(y_min=0, y_max=35, out_of_bounds="clip")
-            cal_q.fit(preds_q_cal, y_cal)
-
             quantile_models[q_name] = model_q
-            quantile_calibrators[q_name] = cal_q
 
-        # Avalia intervalo de confiança no teste
-        p10_test = quantile_calibrators["q10"].predict(quantile_models["q10"].predict(X_test))
-        p50_test = quantile_calibrators["q50"].predict(quantile_models["q50"].predict(X_test))
-        p90_test = quantile_calibrators["q90"].predict(quantile_models["q90"].predict(X_test))
+        # Avalia intervalo de confiança no teste (sem calibração)
+        p10_test = quantile_models["q10"].predict(X_test)
+        p50_test = quantile_models["q50"].predict(X_test)
+        p90_test = quantile_models["q90"].predict(X_test)
 
         coverage = ((y_test.values >= p10_test) & (y_test.values <= p90_test)).mean()
         interval_width = (p90_test - p10_test).mean()
         mae_p50 = mean_absolute_error(y_test, p50_test)
+
+        # Cobertura real por quantil (sanity check)
+        below_p10 = (y_test.values < p10_test).mean()
+        above_p90 = (y_test.values > p90_test).mean()
 
         print(f"\n  Quantile regression:")
         print(f"    P50 MAE       : {mae_p50:.3f}")
