@@ -931,6 +931,25 @@ try:
     print(f"\n  Total: {n_models} modelos + {n_cals} calibradores + 1 encoder salvos")
     print(f"  Diretório: {DATA_DIR}")
 
+    # --- Resumo da linha dinâmica ---
+    print(f"\n{'═' * 62}")
+    print(f"  LINHA DINÂMICA: corners_atual + (90-min)/10  →  arred. .0/.5")
+    print(f"  Odds: 1.83  |  Break-even: {1/1.83:.1%}")
+    print(f"{'═' * 62}")
+    print(f"  {'Min':>4s}  {'Linha méd':>10s}  {'Acurácia':>9s}  {'ROI':>8s}  {'Brier':>7s}")
+    print(f"  {'─'*4}  {'─'*10}  {'─'*9}  {'─'*8}  {'─'*7}")
+    for m, info in all_metadata["models"].items():
+        if "dynamic_line_accuracy" not in info:
+            continue
+        remaining = 90 - m
+        linha_formula = f"+{remaining/10:.1f}"
+        roi_str = f"{info['dynamic_line_roi']:+.1%}"
+        print(f"  {m:>4d}  {linha_formula:>10s}  "
+              f"{info['dynamic_line_accuracy']:>8.1%}  "
+              f"{roi_str:>8s}  "
+              f"{info['dynamic_line_brier']:>7.4f}")
+    print(f"{'═' * 62}")
+
 except ImportError as e:
     print(f"  Pacote não instalado ({e}). Instale: pip install xgboost scikit-learn joblib")
 
