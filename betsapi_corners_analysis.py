@@ -375,6 +375,199 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                 ),
             }
 
+            # --- Features granulares adicionais ---
+            c_home = feat["corners_home_so_far"] or 0
+            c_away = feat["corners_away_so_far"] or 0
+            c_total = c_home + c_away
+
+            # Janelas temporais: últimos 5 e 10 minutos
+            corners_last_5_home = _last_n_minutes(until, snap_min, 5, "corners_home")
+            corners_last_5_away = _last_n_minutes(until, snap_min, 5, "corners_away")
+            corners_last_10_home = _last_n_minutes(until, snap_min, 10, "corners_home")
+            corners_last_10_away = _last_n_minutes(until, snap_min, 10, "corners_away")
+
+            feat["corners_last_5min"] = ((corners_last_5_home or 0) +
+                                          (corners_last_5_away or 0))
+            feat["corners_last_10min"] = ((corners_last_10_home or 0) +
+                                           (corners_last_10_away or 0))
+            feat["corners_acceleration_5_10"] = (feat["corners_last_5min"] -
+                                                  feat["corners_last_10min"])
+            feat["corners_rate_last_5"] = round(feat["corners_last_5min"] / 5.0, 4)
+            feat["corners_rate_last_10"] = round(feat["corners_last_10min"] / 10.0, 4)
+
+            feat["home_corners_last_5"] = corners_last_5_home
+            feat["away_corners_last_5"] = corners_last_5_away
+            feat["home_corners_last_10"] = corners_last_10_home
+            feat["away_corners_last_10"] = corners_last_10_away
+
+            # Estado do jogo
+            score_h = last.get("score_home") or 0
+            score_a = last.get("score_away") or 0
+            feat["is_draw"] = int(score_h == score_a)
+
+            # Pressão do time que lidera/perde (corners últimos 10 min)
+            if score_h > score_a:
+                feat["leading_team_pressure"] = corners_last_10_home or 0
+                feat["losing_team_pressure"] = corners_last_10_away or 0
+            elif score_a > score_h:
+                feat["leading_team_pressure"] = corners_last_10_away or 0
+                feat["losing_team_pressure"] = corners_last_10_home or 0
+            else:
+                feat["leading_team_pressure"] = 0
+                feat["losing_team_pressure"] = 0
+
+            # Tempo restante
+            feat["time_remaining"] = 90 - snap_min
+            feat["total_time_remaining"] = 90 - snap_min + 3  # ~3 min acréscimo médio
+
+            # Proporção de escanteios por time
+            feat["home_corner_share"] = round(c_home / max(c_total, 1), 4)
+            feat["away_corner_share"] = round(c_away / max(c_total, 1), 4)
+
+            # Taxa por time
+            feat["home_corners_rate"] = round(c_home / max(snap_min, 1), 4)
+            feat["away_corners_rate"] = round(c_away / max(snap_min, 1), 4)
+
+            # Expectativa combinada de escanteios (hist home attack + away defense)
+            home_avg_for = hist.get("hist_home_corners_scored_avg")
+            home_avg_against = hist.get("hist_home_corners_conceded_avg")
+            away_avg_for = hist.get("hist_away_corners_scored_avg")
+            away_avg_against = hist.get("hist_away_corners_conceded_avg")
+
+            home_exp = None
+            away_exp = None
+            match_exp = None
+            if home_avg_for is not None and away_avg_against is not None:
+                home_exp = (float(home_avg_for) + float(away_avg_against)) / 2
+            if away_avg_for is not None and home_avg_against is not None:
+                away_exp = (float(away_avg_for) + float(home_avg_against)) / 2
+            if home_exp is not None and away_exp is not None:
+                match_exp = home_exp + away_exp
+
+            feat["home_expected_corners"] = round(home_exp, 4) if home_exp is not None else None
+            feat["away_expected_corners"] = round(away_exp, 4) if away_exp is not None else None
+            feat["match_expected_corners"] = round(match_exp, 4) if match_exp is not None else None
+
+            # Desvio do ritmo esperado
+            if match_exp and match_exp > 0:
+                expected_at_min = match_exp * snap_min / 90
+                feat["corners_vs_expected"] = round(c_total - expected_at_min, 4)
+                feat["pace_ratio"] = round(c_total / max(expected_at_min, 0.1), 4)
+            else:
+                feat["corners_vs_expected"] = None
+                feat["pace_ratio"] = None
+
+            # Liga: desvio padrão e z-score
+            _league_avg = league_avg_map.get(str(event_id)) if league_avg_map else None
+            _league_std = league_std_map.get(str(event_id)) if league_std_map else None
+            feat["league_std_corners"] = _league_std
+
+            if _league_avg is not None and _league_std is not None and _league_std > 0:
+                expected_at_min_lg = _league_avg * snap_min / 90
+                feat["z_score_corners"] = round(
+                    (c_total - expected_at_min_lg) / _league_std, 4)
+            else:
+                feat["z_score_corners"] = None
+
+            # Estilo do time relativo à liga
+            if _league_avg is not None:
+                half_league = _league_avg / 2  # média por time na liga
+                feat["team_style_home"] = (round(float(home_avg_for) - half_league, 4)
+                                            if home_avg_for is not None else None)
+                feat["team_style_away"] = (round(float(away_avg_for) - half_league, 4)
+                                            if away_avg_for is not None else None)
+            else:
+                feat["team_style_home"] = None
+                feat["team_style_away"] = None
+
+            # Índice de intensidade
+            if _league_avg is not None and _league_avg > 0:
+                league_rate = _league_avg / 90
+                feat["intensity_index"] = round(
+                    feat["corners_rate_last_10"] / max(league_rate, 0.01), 4)
+            else:
+                feat["intensity_index"] = None
+
+            # Late game boost
+            feat["late_game_boost"] = round(
+                feat["corners_last_10min"] * (snap_min / 90), 4)
+
+            # Índice de pressão por time (últimos 10 min)
+            h10 = corners_last_10_home or 0
+            a10 = corners_last_10_away or 0
+            feat["pressure_index_home"] = round(h10 / max(a10, 0.5), 4)
+            feat["pressure_index_away"] = round(a10 / max(h10, 0.5), 4)
+
+            # Fator estado do jogo × tempo
+            feat["game_state_factor"] = round((score_h - score_a) * snap_min, 4)
+
+            # Pressão de comeback (time perdendo após min 60)
+            feat["comeback_pressure"] = int(snap_min > 60 and score_h != score_a)
+
+            # Dominância de escanteios
+            feat["dominance_index"] = round(
+                abs(feat["home_corner_share"] - 0.5), 4)
+
+            # Volatilidade (diferença entre ritmos de 5 e 10 min)
+            feat["volatility_index"] = round(abs(
+                feat["corners_rate_last_5"] - feat["corners_rate_last_10"]), 4)
+
+            # Momentum shift
+            feat["momentum_shift"] = round(
+                feat["corners_last_5min"] - feat["corners_last_10min"] / 2, 4)
+
+            # Projeção de escanteios restantes
+            feat["expected_remaining_corners"] = round(
+                feat["corners_rate_per_min"] * feat["total_time_remaining"], 4)
+            feat["adjusted_expected_remaining"] = round(
+                feat["corners_rate_last_10"] * feat["total_time_remaining"], 4)
+
+            # Análise 1º vs 2º tempo (só para snap_min > 45)
+            if snap_min > 45:
+                at_45 = group[group["minute"] <= 45]
+                if not at_45.empty:
+                    last_45 = at_45.iloc[-1]
+                    c_45_home = last_45.get("corners_home") or 0
+                    c_45_away = last_45.get("corners_away") or 0
+                    first_half = c_45_home + c_45_away
+                else:
+                    first_half = 0
+
+                second_half_so_far = c_total - first_half
+                mins_2nd = max(snap_min - 45, 1)
+                second_half_rate = second_half_so_far / mins_2nd
+                first_half_rate = first_half / 45
+
+                feat["first_half_corners"] = first_half
+                feat["second_half_corners_so_far"] = second_half_so_far
+                feat["second_half_rate"] = round(second_half_rate, 4)
+                feat["delta_rate_halves"] = round(second_half_rate - first_half_rate, 4)
+                feat["fatigue_factor"] = (round(
+                    feat["corners_rate_last_10"] / max(first_half_rate, 0.01), 4)
+                    if first_half > 0 else None)
+            else:
+                feat["first_half_corners"] = None
+                feat["second_half_corners_so_far"] = None
+                feat["second_half_rate"] = None
+                feat["delta_rate_halves"] = None
+                feat["fatigue_factor"] = None
+
+            # Features adicionais sugeridas
+            feat["possession_diff"] = _safe_sub(
+                feat["possession_home_avg"], feat["possession_away_avg"])
+            feat["fouls_diff"] = _diff(last, "fouls_home", "fouls_away")
+            feat["fouls_total"] = ((last.get("fouls_home") or 0) +
+                                    (last.get("fouls_away") or 0))
+            feat["corners_per_dangerous_attack"] = round(
+                c_total / max((last.get("dangerous_attacks_home") or 0) +
+                               (last.get("dangerous_attacks_away") or 0), 1), 4)
+            total_shots = ((last.get("shots_on_target_home") or 0) +
+                           (last.get("shots_on_target_away") or 0) +
+                           (last.get("shots_off_target_home") or 0) +
+                           (last.get("shots_off_target_away") or 0))
+            feat["shots_per_corner"] = round(
+                total_shots / max(c_total, 1), 4)
+
             # --- Features pré-jogo do panorama ---
             # Odds
             for col in ["corners_line", "corners_over_odds", "corners_under_odds",
