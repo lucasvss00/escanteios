@@ -1089,8 +1089,15 @@ try:
         #
         # Linha = corners_acumulados + (minutos_restantes / 10)
         # Arredondada para .0 ou .5 mais próximo.
-        # Aposta: sempre Over a linha a odds 1.83.
+        #
+        # Avalia 3 estratégias:
+        #   (A) Baseline: apostar Over SEMPRE
+        #   (B) Modelo: apostar Over quando pred > linha
+        #   (C) Probabilidade: apostar Over quando P(over) > threshold
         # ==================================================================
+        ODDS_OVER = 1.83
+        BREAKEVEN = 1.0 / ODDS_OVER
+
         remaining_minutes = 90 - snap_min
         if "corners_total_so_far" in X_test.columns:
             corners_so_far_test = X_test["corners_total_so_far"].values
@@ -1102,20 +1109,78 @@ try:
 
         over_actual = (y_test.values > dynamic_line).astype(int)
 
-        accuracy_dyn = over_actual.mean()
-        roi_dyn = accuracy_dyn * 0.83 - (1.0 - accuracy_dyn) * 1.0
-
-        # P(Over) via distribuição normal centrada na predição, σ = RMSE do modelo
+        # P(Over) via distribuição normal centrada na predição, σ = RMSE
         sigma = max(rmse_raw, 0.5)
-        p_over = sp_norm.cdf((preds_best - dynamic_line) / sigma)
-        brier_dyn = float(np.mean((p_over - over_actual) ** 2))
+        p_over = 1.0 - sp_norm.cdf(dynamic_line, loc=preds_best, scale=sigma)
+        brier_all = float(np.mean((p_over - over_actual) ** 2))
+
+        # --- (A) Baseline: apostar Over SEMPRE ---
+        n_total = len(y_test)
+        wins_all = over_actual.sum()
+        acc_all = wins_all / n_total
+        profit_all = wins_all * (ODDS_OVER - 1) - (n_total - wins_all)
+        roi_all = profit_all / n_total
 
         print(f"\n  Linha dinâmica  (corners_atual + {remaining_minutes}/10 → arred. .0/.5):")
         print(f"    Linha média           : {dynamic_line.mean():.2f}  "
               f"(min={dynamic_line.min():.1f}  max={dynamic_line.max():.1f})")
-        print(f"    Acurácia (over rate)  : {accuracy_dyn:.1%}")
-        print(f"    ROI @ odds 1.83       : {roi_dyn:+.1%}")
-        print(f"    Brier Score           : {brier_dyn:.4f}")
+        print(f"    Break-even @ {ODDS_OVER:.2f}    : {BREAKEVEN:.1%}")
+        print(f"\n    (A) BASELINE — Apostar Over SEMPRE:")
+        print(f"        Apostas           : {n_total:,}")
+        print(f"        Acurácia          : {acc_all:.1%}")
+        print(f"        ROI               : {roi_all:+.1%}")
+        print(f"        Lucro             : {profit_all:+.1f} unidades")
+        print(f"        Brier Score       : {brier_all:.4f}")
+
+        # --- (B) Modelo: apostar Over quando pred > linha ---
+        mask_model = preds_best > dynamic_line
+        n_model = mask_model.sum()
+        if n_model > 0:
+            wins_model = over_actual[mask_model].sum()
+            acc_model = wins_model / n_model
+            profit_model = wins_model * (ODDS_OVER - 1) - (n_model - wins_model)
+            roi_model = profit_model / n_model
+            brier_model = float(np.mean((p_over[mask_model] - over_actual[mask_model]) ** 2))
+            yield_model = profit_model / n_total  # yield sobre universo total
+        else:
+            acc_model = roi_model = brier_model = yield_model = 0.0
+            profit_model = 0.0
+
+        print(f"\n    (B) MODELO — Over quando pred > linha:")
+        print(f"        Apostas           : {n_model:,} / {n_total:,} ({n_model/n_total:.0%} selecionadas)")
+        print(f"        Acurácia          : {acc_model:.1%}")
+        print(f"        ROI               : {roi_model:+.1%}")
+        print(f"        Lucro             : {profit_model:+.1f} unidades")
+        print(f"        Yield (s/ total)  : {yield_model:+.1%}")
+        print(f"        Brier Score       : {brier_model:.4f}")
+
+        # --- (C) Probabilidade: thresholds 55%, 60%, 65% ---
+        print(f"\n    (C) PROBABILIDADE — Over quando P(over) > threshold:")
+        print(f"        {'Thresh':>7s}  {'Apostas':>8s}  {'Acur':>6s}  {'ROI':>8s}  {'Lucro':>8s}  {'Brier':>7s}")
+        best_roi_thresh = 0.0
+        best_thresh = 0.55
+        for thresh in [0.50, 0.55, 0.60, 0.65, 0.70]:
+            mask_t = p_over >= thresh
+            n_t = mask_t.sum()
+            if n_t > 0:
+                wins_t = over_actual[mask_t].sum()
+                acc_t = wins_t / n_t
+                profit_t = wins_t * (ODDS_OVER - 1) - (n_t - wins_t)
+                roi_t = profit_t / n_t
+                brier_t = float(np.mean((p_over[mask_t] - over_actual[mask_t]) ** 2))
+                if roi_t > best_roi_thresh:
+                    best_roi_thresh = roi_t
+                    best_thresh = thresh
+            else:
+                acc_t = roi_t = brier_t = 0.0
+                profit_t = 0.0
+            print(f"        {thresh:>6.0%}  {n_t:>8,}  {acc_t:>5.1%}  "
+                  f"{roi_t:>+7.1%}  {profit_t:>+7.1f}  {brier_t:>7.4f}")
+
+        # Guarda métricas para metadata (usa estratégia B como principal)
+        accuracy_dyn = acc_model if n_model > 0 else acc_all
+        roi_dyn = roi_model if n_model > 0 else roi_all
+        brier_dyn = brier_model if n_model > 0 else brier_all
 
         # ==================================================================
         # 6c. Quantile regression (P10, P50, P90)
