@@ -820,8 +820,15 @@ try:
         "corners_diff",
         "corners_last_15_home", "corners_last_15_away",
         "corners_per_attack_ratio",
+        # Janelas temporais: últimos 5 e 10 minutos
+        "corners_last_5min", "corners_last_10min",
+        "corners_acceleration_5_10",
+        "corners_rate_last_5", "corners_rate_last_10",
+        "home_corners_last_5", "away_corners_last_5",
+        "home_corners_last_10", "away_corners_last_10",
         # Posse
         "possession_home_avg", "possession_away_avg",
+        "possession_diff",
         # Ataques
         "attacks_home", "attacks_away",
         "dangerous_attacks_home", "dangerous_attacks_away",
@@ -834,6 +841,35 @@ try:
         # Placar e contexto
         "score_home", "score_away",
         "score_diff", "total_red_cards", "red_card_diff",
+        "is_draw",
+        # Pressão por estado do jogo
+        "leading_team_pressure", "losing_team_pressure",
+        "game_state_factor", "comeback_pressure",
+        # Tempo restante
+        "time_remaining", "total_time_remaining",
+        # Proporção e taxa por time
+        "home_corner_share", "away_corner_share",
+        "home_corners_rate", "away_corners_rate",
+        # Expectativa combinada (hist home attack + away defense)
+        "home_expected_corners", "away_expected_corners", "match_expected_corners",
+        "corners_vs_expected", "pace_ratio",
+        # Liga
+        "league_avg_corners", "league_std_corners",
+        "z_score_corners",
+        "team_style_home", "team_style_away",
+        "intensity_index",
+        # Dinâmica do jogo
+        "late_game_boost",
+        "pressure_index_home", "pressure_index_away",
+        "dominance_index", "volatility_index", "momentum_shift",
+        # Projeções
+        "expected_remaining_corners", "adjusted_expected_remaining",
+        # 1º vs 2º tempo
+        "first_half_corners", "second_half_corners_so_far",
+        "second_half_rate", "delta_rate_halves", "fatigue_factor",
+        # Faltas e conversão
+        "fouls_diff", "fouls_total",
+        "corners_per_dangerous_attack", "shots_per_corner",
         # Histórico dos times
         "hist_home_corners_avg", "hist_away_corners_avg",
         "hist_home_corners_scored_avg", "hist_away_corners_scored_avg",
@@ -844,8 +880,6 @@ try:
         "hist_home_games", "hist_away_games",
         # Target encoding
         "league_id_target_enc", "home_team_target_enc", "away_team_target_enc",
-        # Liga
-        "league_avg_corners",
         # Temporais
         "day_of_week", "hour_of_day", "month", "is_weekend",
     ]
