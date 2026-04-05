@@ -620,6 +620,10 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                         "tackles_home_total", "tackles_away_total"]:
                 feat[col] = pano.get(col)
 
+            # Days rest (do histórico dos times)
+            feat["days_rest_home"] = hist.get("days_rest_home")
+            feat["days_rest_away"] = hist.get("days_rest_away")
+
             # --- Features históricas dos times ---
             for col in hist.index:
                 if col != "event_id" and col.startswith("hist_"):
