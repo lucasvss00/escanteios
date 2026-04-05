@@ -1316,11 +1316,7 @@ try:
             "dynamic_line_n_bets":   int(n_model) if n_model > 0 else int(n_total),
         }
 
-    # --- Salva target encoder e metadata ---
-    if ENCODE_COLS:
-        joblib.dump(target_encoder, DATA_DIR / "target_encoder.joblib")
-        print(f"\n  Target encoder salvo → {DATA_DIR / 'target_encoder.joblib'}")
-
+    # --- Salva metadata ---
     joblib.dump(all_metadata, DATA_DIR / "modelo_corners_meta.joblib")
     print(f"  Metadata salvo → {DATA_DIR / 'modelo_corners_meta.joblib'}")
 
