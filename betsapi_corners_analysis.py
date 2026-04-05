@@ -1292,6 +1292,11 @@ try:
             joblib.dump(quantile_models[q_name],
                         DATA_DIR / f"modelo_corners_xgb_min{snap_min}_{q_name}.joblib")
 
+        if te_min is not None:
+            joblib.dump(te_min, DATA_DIR / f"target_encoder_min{snap_min}.joblib")
+
+        joblib.dump(train_medians, DATA_DIR / f"train_medians_min{snap_min}.joblib")
+
         all_metadata["models"][snap_min] = {
             "features":         available,
             "n_train":          len(X_train),
