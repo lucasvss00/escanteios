@@ -568,8 +568,33 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
             feat["shots_per_corner"] = round(
                 total_shots / max(c_total, 1), 4)
 
+            # Totais agregados
+            feat["saves_total"] = ((last.get("saves_home") or 0) +
+                                    (last.get("saves_away") or 0))
+            feat["shots_total"] = total_shots
+            feat["offsides_total"] = ((last.get("offsides_home") or 0) +
+                                       (last.get("offsides_away") or 0))
+            feat["cards_total"] = ((last.get("yellow_cards_home") or 0) +
+                                    (last.get("yellow_cards_away") or 0) +
+                                    (last.get("red_cards_home") or 0) +
+                                    (last.get("red_cards_away") or 0))
+            feat["goal_kicks_total"] = ((last.get("goal_kicks_home") or 0) +
+                                         (last.get("goal_kicks_away") or 0))
+
+            # Eficiência ofensiva: escanteios por tiro de meta
+            feat["corners_per_goal_kick"] = round(
+                c_total / max(feat["goal_kicks_total"], 1), 4)
+
+            # Placar do intervalo (para snapshots > 45 min)
+            if snap_min > 45:
+                feat["ht_score_home"] = pano.get("ht_score_home")
+                feat["ht_score_away"] = pano.get("ht_score_away")
+            else:
+                feat["ht_score_home"] = None
+                feat["ht_score_away"] = None
+
             # --- Features pré-jogo do panorama ---
-            # Odds
+            # Odds pré-jogo
             for col in ["corners_line", "corners_over_odds", "corners_under_odds",
                         "asian_corners_line", "asian_corners_home_odds", "asian_corners_away_odds",
                         "odds_home_win", "odds_draw", "odds_away_win",
@@ -577,11 +602,18 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                         "btts_yes_odds", "btts_no_odds"]:
                 feat[col] = pano.get(col)
 
-            # H2H
-            for col in ["h2h_total_games", "h2h_avg_corners_total",
-                        "h2h_avg_corners_home", "h2h_avg_corners_away",
-                        "h2h_avg_goals_total"]:
+            # Odds ao vivo (se disponíveis)
+            for col in ["live_corners_line", "live_corners_over_odds",
+                        "live_corners_under_odds"]:
                 feat[col] = pano.get(col)
+
+            # Divergência mercado vs expectativa histórica
+            _cl = feat.get("corners_line")
+            _me = feat.get("match_expected_corners")
+            if _cl is not None and _me is not None:
+                feat["line_diff_vs_expected"] = round(float(_cl) - float(_me), 4)
+            else:
+                feat["line_diff_vs_expected"] = None
 
             # Stats adicionais do event/view
             for col in ["throw_ins_home_total", "throw_ins_away_total",
