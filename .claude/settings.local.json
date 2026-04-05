@@ -43,7 +43,13 @@
       "Bash(python -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\)\")",
       "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''betsapi_corners_collector.py'', doraise=True\\)\")",
       "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import py_compile; py_compile.compile\\(''C:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', doraise=True\\)\")",
-      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import xgboost; print\\(xgboost.__version__\\)\")"
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/python.exe -c \"import xgboost; print\\(xgboost.__version__\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(py -3 -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(ls /c/Users/Lucas/AppData/Local/Programs/Python/*/python.exe)",
+      "Bash(/c/Users/Lucas/AppData/Local/Programs/Python/Python313/python.exe -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(/c/Users/Lucas/AppData/Local/Programs/Python/Python313/python.exe -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")"
     ]
   }
 }
