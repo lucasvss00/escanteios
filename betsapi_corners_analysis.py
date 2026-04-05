@@ -992,7 +992,7 @@ try:
     all_metadata: dict = {"snapshot_minutes": SNAPSHOT_MINUTES, "models": {}}
 
     print(f"\n  Dataset total: {len(df_features):,} amostras")
-    print(f"  Split: 60% treino / 20% calibração / 20% teste")
+    print(f"  Split temporal: 60% treino / 20% calibração / 20% teste (ordem cronológica)")
 
     for snap_min in SNAPSHOT_MINUTES:
         print(f"\n{'─' * 62}")
@@ -1001,28 +1001,65 @@ try:
 
         df_min = df_features[df_features["snap_minute"] == snap_min].copy()
 
-        # Minuto 15 não tem momentum; demais sim
-        if snap_min == 15:
-            feat_cols = BASE_FEATURE_COLS
+        # --- Split temporal: ordena por data de jogo antes de dividir ---
+        if "kickoff_dt" in df_min.columns:
+            df_min = df_min.sort_values("kickoff_dt").reset_index(drop=True)
+        n_total_min = len(df_min)
+        n_test_sz   = int(n_total_min * 0.20)
+        n_cal_sz    = int((n_total_min - n_test_sz) * 0.25)  # 25% do trainval ≈ 20% do total
+        n_train_sz  = n_total_min - n_test_sz - n_cal_sz
+
+        df_train_raw = df_min.iloc[:n_train_sz].copy()
+        df_cal_raw   = df_min.iloc[n_train_sz:n_train_sz + n_cal_sz].copy()
+        df_test_raw  = df_min.iloc[n_train_sz + n_cal_sz:].copy()
+
+        # --- Target encoding: fit APENAS no treino, transforma todos os splits ---
+        encode_cols_avail = [c for c in ENCODE_COLS if c in df_min.columns]
+        if encode_cols_avail:
+            te_min = TargetEncoderSmoothed(
+                cols=encode_cols_avail, target_col=TARGET, smoothing=10
+            )
+            te_min.fit(df_train_raw)
+            df_train_raw = te_min.transform(df_train_raw)
+            df_cal_raw   = te_min.transform(df_cal_raw)
+            df_test_raw  = te_min.transform(df_test_raw)
         else:
-            feat_cols = BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS
+            te_min = None
 
-        available, df_clean = prepare_features(df_min, feat_cols)
+        # Minuto 15 não tem momentum; demais sim
+        feat_cols = BASE_FEATURE_COLS if snap_min == 15 else BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS
 
-        if len(df_clean) < 100:
-            print(f"  ⚠ Dados insuficientes ({len(df_clean)} amostras). Pulando.")
+        # --- Determina features disponíveis e medianas usando APENAS o treino ---
+        available_train, df_train_clean = prepare_features(df_train_raw, feat_cols)
+
+        if len(df_train_clean) < 80:
+            print(f"  ⚠ Dados insuficientes no treino ({len(df_train_clean)} amostras). Pulando.")
             continue
 
-        X = df_clean[available]
-        y = df_clean[TARGET]
+        fill_med_cols = [c for c in available_train
+                         if c.startswith(("hist_", "league_")) or c.endswith("_target_enc")]
+        train_medians = {c: df_train_clean[c].median() for c in fill_med_cols}
 
-        # Split 3-way: treino (60%), calibração (20%), teste (20%)
-        X_trainval, X_test, y_trainval, y_test = train_test_split(
-            X, y, test_size=0.20, random_state=42
-        )
-        X_train, X_cal, y_train, y_cal = train_test_split(
-            X_trainval, y_trainval, test_size=0.25, random_state=42  # 0.25 × 0.80 = 0.20
-        )
+        # Aplica as mesmas colunas e medianas do treino ao cal e test
+        _, df_cal_clean  = prepare_features(df_cal_raw,  feat_cols,
+                                             medians=train_medians,
+                                             available_override=available_train)
+        _, df_test_clean = prepare_features(df_test_raw, feat_cols,
+                                             medians=train_medians,
+                                             available_override=available_train)
+
+        available = available_train
+
+        if len(df_test_clean) < 20:
+            print(f"  ⚠ Dados insuficientes no teste ({len(df_test_clean)} amostras). Pulando.")
+            continue
+
+        X_train = df_train_clean[available]
+        y_train = df_train_clean[TARGET]
+        X_cal   = df_cal_clean[available]
+        y_cal   = df_cal_clean[TARGET]
+        X_test  = df_test_clean[available]
+        y_test  = df_test_clean[TARGET]
 
         print(f"  Amostras: treino={len(X_train):,}  cal={len(X_cal):,}  teste={len(X_test):,}")
         print(f"  Features: {len(available)}")
