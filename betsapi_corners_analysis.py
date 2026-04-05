@@ -874,10 +874,23 @@ try:
         "shots_on_target_home", "shots_on_target_away",
         "shots_off_target_home", "shots_off_target_away",
         "shots_on_target_diff",
+        "shots_total",
+        # Defesas, impedimentos, tiros de meta
+        "saves_home", "saves_away", "saves_total",
+        "offsides_home", "offsides_away", "offsides_total",
+        "goal_kicks_home", "goal_kicks_away", "goal_kicks_total",
+        "corners_per_goal_kick",
+        # Cartões e faltas (individuais + agregados)
+        "yellow_cards_home", "yellow_cards_away",
+        "fouls_home", "fouls_away",
+        "fouls_diff", "fouls_total",
+        "cards_total",
         # Placar e contexto
         "score_home", "score_away",
         "score_diff", "total_red_cards", "red_card_diff",
         "is_draw",
+        # Placar do intervalo (disponível para snap > 45)
+        "ht_score_home", "ht_score_away",
         # Pressão por estado do jogo
         "leading_team_pressure", "losing_team_pressure",
         "game_state_factor", "comeback_pressure",
@@ -903,9 +916,25 @@ try:
         # 1º vs 2º tempo
         "first_half_corners", "second_half_corners_so_far",
         "second_half_rate", "delta_rate_halves", "fatigue_factor",
-        # Faltas e conversão
-        "fouls_diff", "fouls_total",
+        # Conversão / eficiência
         "corners_per_dangerous_attack", "shots_per_corner",
+        # Odds pré-jogo
+        "corners_line", "corners_over_odds", "corners_under_odds",
+        "asian_corners_line", "asian_corners_home_odds", "asian_corners_away_odds",
+        "odds_home_win", "odds_draw", "odds_away_win",
+        "goals_line", "goals_over_odds", "goals_under_odds",
+        "btts_yes_odds", "btts_no_odds",
+        # Odds ao vivo
+        "live_corners_line", "live_corners_over_odds", "live_corners_under_odds",
+        # Divergência mercado vs expectativa
+        "line_diff_vs_expected",
+        # Stats do event/view
+        "throw_ins_home_total", "throw_ins_away_total",
+        "tackles_home_total", "tackles_away_total",
+        # Descanso
+        "days_rest_home", "days_rest_away",
+        # Qualidade dos dados
+        "n_snap_minutes",
         # Histórico dos times
         "hist_home_corners_avg", "hist_away_corners_avg",
         "hist_home_corners_scored_avg", "hist_away_corners_scored_avg",
