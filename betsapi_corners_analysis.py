@@ -787,21 +787,9 @@ ENCODE_COLS = ["league_id", "home_team", "away_team"]
 # Apenas usa colunas que existem no dataset
 ENCODE_COLS = [c for c in ENCODE_COLS if c in df_features.columns]
 
-if ENCODE_COLS:
-    print("\nAplicando target encoding para:", ENCODE_COLS)
-    target_encoder = TargetEncoderSmoothed(
-        cols=ENCODE_COLS,
-        target_col="target_corners_total",
-        smoothing=10,
-    )
-    target_encoder.fit(df_features)
-    df_features = target_encoder.transform(df_features)
-    for col in ENCODE_COLS:
-        enc_col = f"{col}_target_enc"
-        if enc_col in df_features.columns:
-            print(f"  {enc_col}: min={df_features[enc_col].min():.2f}  "
-                  f"max={df_features[enc_col].max():.2f}  "
-                  f"mean={df_features[enc_col].mean():.2f}")
+# Target encoding será aplicado DENTRO do loop por minuto, após o split temporal,
+# para evitar data leakage do conjunto de teste.
+print(f"\nTarget encoding ({ENCODE_COLS}) será aplicado por minuto após o split temporal.")
 
 # %%
 print("\n--- Features: correlação com target_corners_total ---")
