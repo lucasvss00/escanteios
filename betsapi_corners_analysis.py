@@ -499,7 +499,8 @@ def _last_n_minutes(df, current_min, n, col):
 # %%
 print("\nConstruindo dataset de features por minuto de snapshot...")
 df_features = build_live_features(df_snap, df_pano, df_team_hist, SNAPSHOT_MINUTES,
-                                   league_avg_map=league_avg)
+                                   league_avg_map=league_avg,
+                                   league_std_map=league_std)
 print(f"Features dataset: {len(df_features):,} linhas | {df_features['event_id'].nunique():,} jogos")
 
 # %%
