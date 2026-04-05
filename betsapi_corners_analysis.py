@@ -902,6 +902,9 @@ try:
             "mae_p50":          round(mae_p50, 4),
             "coverage_80":      round(coverage, 4),
             "interval_width":   round(interval_width, 2),
+            "dynamic_line_accuracy": round(accuracy_dyn, 4),
+            "dynamic_line_roi":      round(roi_dyn, 4),
+            "dynamic_line_brier":    round(brier_dyn, 4),
         }
 
     # --- Salva target encoder e metadata ---
