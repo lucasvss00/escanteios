@@ -951,24 +951,38 @@ try:
 
     TARGET = "target_corners_total"
 
-    def prepare_features(df: pd.DataFrame, feature_cols: list[str]) -> tuple[list[str], pd.DataFrame]:
-        """Filtra features existentes, remove ≥99% NaN, preenche NaN restantes."""
-        available = [c for c in feature_cols if c in df.columns]
+    def prepare_features(
+        df: pd.DataFrame,
+        feature_cols: list[str],
+        medians: dict | None = None,
+        available_override: list[str] | None = None,
+    ) -> tuple[list[str], pd.DataFrame]:
+        """Filtra features existentes, remove ≥99% NaN, preenche NaN restantes.
 
-        # Remove colunas quase vazias
-        null_pcts = df[available].isnull().mean()
-        available = [c for c in available if null_pcts[c] < 0.99]
+        medians: dict {col: valor} calculado APENAS no treino para evitar leakage.
+                 Se None, calcula na própria df (usado apenas para inferir available).
+        available_override: lista de colunas já definida (usada em cal/test para
+                            respeitar as mesmas colunas do treino).
+        """
+        if available_override is not None:
+            available = [c for c in available_override if c in df.columns]
+        else:
+            available = [c for c in feature_cols if c in df.columns]
+            # Remove colunas quase vazias (avaliado no treino; aqui serve de filtro inicial)
+            null_pcts = df[available].isnull().mean()
+            available = [c for c in available if null_pcts[c] < 0.99]
 
         df_out = df[available + [TARGET]].copy()
         df_out = df_out.dropna(subset=[TARGET])
 
-        # Preenche NaN: históricas/liga/encoding → mediana; ao vivo → 0
+        # Preenche NaN: históricas/liga/encoding → mediana do treino; ao vivo → 0
         fill_med = [c for c in available if c.startswith(("hist_", "league_"))
                     or c.endswith("_target_enc")]
         fill_zero = [c for c in available if c not in fill_med]
 
         for c in fill_med:
-            df_out[c] = df_out[c].fillna(df_out[c].median())
+            fill_val = medians[c] if (medians and c in medians) else df_out[c].median()
+            df_out[c] = df_out[c].fillna(fill_val)
         for c in fill_zero:
             df_out[c] = df_out[c].fillna(0)
 
