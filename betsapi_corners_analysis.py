@@ -218,8 +218,8 @@ print("\nCalculando histórico dos times (rolling window=%d)..." % ROLLING_WINDO
 df_team_hist = build_team_history(df_pano)
 print(f"Histórico calculado para {len(df_team_hist):,} jogos")
 
-print("Calculando média histórica de escanteios por liga...")
-league_avg = build_league_avg_corners(df_pano)
+print("Calculando média e desvio padrão histórico de escanteios por liga...")
+league_avg, league_std = build_league_avg_corners(df_pano)
 
 
 # %%
