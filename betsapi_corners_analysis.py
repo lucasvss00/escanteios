@@ -786,6 +786,39 @@ try:
                 print(f"    Faixa {lo:2d}-{hi:2d}: MAE={mae_f:.2f}  viés={bias:+.2f}  (n={mask.sum():,})")
 
         # ==================================================================
+        # 6f. Avaliação da linha dinâmica
+        #
+        # Linha = corners_acumulados + (minutos_restantes / 10)
+        # Arredondada para .0 ou .5 mais próximo.
+        # Aposta: sempre Over a linha a odds 1.83.
+        # ==================================================================
+        remaining_minutes = 90 - snap_min
+        if "corners_total_so_far" in X_test.columns:
+            corners_so_far_test = X_test["corners_total_so_far"].values
+        else:
+            corners_so_far_test = np.zeros(len(X_test))
+
+        raw_line = corners_so_far_test + remaining_minutes / 10.0
+        dynamic_line = np.round(raw_line * 2) / 2  # arredonda para .0 ou .5
+
+        over_actual = (y_test.values > dynamic_line).astype(int)
+
+        accuracy_dyn = over_actual.mean()
+        roi_dyn = accuracy_dyn * 0.83 - (1.0 - accuracy_dyn) * 1.0
+
+        # P(Over) via distribuição normal centrada na predição, σ = RMSE do modelo
+        sigma = max(rmse_raw, 0.5)
+        p_over = sp_norm.cdf((preds_best - dynamic_line) / sigma)
+        brier_dyn = float(np.mean((p_over - over_actual) ** 2))
+
+        print(f"\n  Linha dinâmica  (corners_atual + {remaining_minutes}/10 → arred. .0/.5):")
+        print(f"    Linha média           : {dynamic_line.mean():.2f}  "
+              f"(min={dynamic_line.min():.1f}  max={dynamic_line.max():.1f})")
+        print(f"    Acurácia (over rate)  : {accuracy_dyn:.1%}")
+        print(f"    ROI @ odds 1.83       : {roi_dyn:+.1%}")
+        print(f"    Brier Score           : {brier_dyn:.4f}")
+
+        # ==================================================================
         # 6c. Quantile regression (P10, P50, P90)
         #
         # NÃO aplica calibração isotônica nos quantis — isso colapsa
