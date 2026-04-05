@@ -888,6 +888,8 @@ try:
     MOMENTUM_FEATURE_COLS = [
         "delta_corners_total_so_far", "delta_corners_home_so_far",
         "delta_corners_away_so_far", "delta_corners_rate_per_min",
+        "delta_corners_last_5min", "delta_corners_last_10min",
+        "delta_corners_rate_last_5", "delta_corners_rate_last_10",
         "delta_dangerous_attacks_home", "delta_dangerous_attacks_away",
         "delta_attacks_home", "delta_attacks_away",
         "delta_shots_on_target_home", "delta_shots_on_target_away",
