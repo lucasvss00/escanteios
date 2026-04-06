@@ -1041,6 +1041,28 @@ try:
         "league_id_target_enc", "home_team_target_enc", "away_team_target_enc",
         # Temporais
         "day_of_week", "hour_of_day", "month", "is_weekend",
+        # Game state avançado
+        "is_home_losing", "is_away_losing",
+        "losing_team_attack_share", "losing_team_dangerous_ratio",
+        "urgency_index", "urgency_weighted",
+        # Pressão ofensiva últimos 5/10 min
+        "attacks_last_5min", "attacks_last_10min",
+        "dangerous_attacks_last_5min", "dangerous_attacks_last_10min",
+        "shots_last_5min",
+        "pressure_acceleration",
+        # Dominância por time
+        "attack_share_home", "attack_share_away",
+        "dangerous_share_home", "dangerous_share_away",
+        # Momentum ratios
+        "corners_momentum_ratio", "attacks_momentum_ratio",
+        # Qualidade de chute
+        "shots_per_dangerous_attack",
+        # Streaks (tempo desde último evento)
+        "time_since_last_corner", "time_since_last_shot",
+        "time_since_last_dangerous_attack",
+        # Não-linearidade do tempo
+        "snap_minute_sq", "phase_of_game",
+        "is_last_15min", "losing_in_last_15",
     ]
 
     # Features de momentum (só disponíveis para minutos > 15)
