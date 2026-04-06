@@ -699,6 +699,109 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
             feat["is_last_15min"]      = int(snap_min >= 75)
             feat["losing_in_last_15"]  = int(snap_min >= 75 and score_h != score_a)
 
+            # ----------------------------------------------------------------
+            # Taxas de escanteio por estado do placar
+            # ----------------------------------------------------------------
+            if score_h < score_a:           # home losing
+                _losing_corners  = c_home
+                _winning_corners = c_away
+            elif score_a < score_h:         # away losing
+                _losing_corners  = c_away
+                _winning_corners = c_home
+            else:                           # draw
+                _losing_corners  = 0
+                _winning_corners = 0
+
+            feat["losing_team_corners_rate"]  = round(_losing_corners  / max(snap_min, 1), 4)
+            feat["winning_team_corners_rate"] = round(_winning_corners / max(snap_min, 1), 4)
+
+            # Pressão perigosa do time perdendo por minuto
+            if score_h < score_a:
+                _losing_da = last.get("dangerous_attacks_home") or 0
+            elif score_a < score_h:
+                _losing_da = last.get("dangerous_attacks_away") or 0
+            else:
+                _losing_da = 0
+            feat["pressure_when_losing"] = round(_losing_da / max(snap_min, 1), 4)
+
+            # ----------------------------------------------------------------
+            # Qualidade da pressão e distribuição de campo
+            # ----------------------------------------------------------------
+            feat["pressure_ratio"]    = round(_total_dangerous / max(_total_attacks, 1), 4)
+            _da_h = last.get("dangerous_attacks_home") or 0
+            _da_a = last.get("dangerous_attacks_away") or 0
+            feat["field_tilt_proxy"]  = round(_da_h / max(_da_h + _da_a, 1), 4)
+
+            # ----------------------------------------------------------------
+            # Aceleração de escanteios: last_5 - prev_5 (janela anterior)
+            # ----------------------------------------------------------------
+            feat["acceleration_corners"] = round(
+                2 * feat["corners_last_5min"] - feat["corners_last_10min"], 4)
+
+            # ----------------------------------------------------------------
+            # Momentum score: soma ponderada de eventos nos últimos 15 min
+            # (corners peso 3, dangerous peso 2, attacks peso 1)
+            # ----------------------------------------------------------------
+            _c_last15  = (feat["corners_last_15_home"] or 0) + \
+                         (_last_n_minutes(until, snap_min, 15, "corners_away") or 0)
+            _da_last15 = (_last_n_minutes(until, snap_min, 15, "dangerous_attacks_home") or 0) + \
+                         (_last_n_minutes(until, snap_min, 15, "dangerous_attacks_away") or 0)
+            _att_last15 = (_last_n_minutes(until, snap_min, 15, "attacks_home") or 0) + \
+                          (_last_n_minutes(until, snap_min, 15, "attacks_away") or 0)
+            feat["momentum_score"] = round(3 * _c_last15 + 2 * _da_last15 + _att_last15, 4)
+
+            # ----------------------------------------------------------------
+            # Game regime: LOW / NORMAL / HIGH (0/1/2)
+            # Baseado em ritmo de escanteios + ataques perigosos + chutes
+            # ----------------------------------------------------------------
+            _c_rate   = feat["corners_rate_per_min"]
+            _da_rate  = feat["dangerous_attacks_rate"]
+            _sh_rate  = total_shots / max(snap_min, 1)
+            _regime_score = _c_rate * 10 + _da_rate + _sh_rate * 0.5
+            feat["game_regime"] = (0 if _regime_score < 0.8 else
+                                   1 if _regime_score < 1.8 else 2)
+
+            # ----------------------------------------------------------------
+            # Dominância ofensiva e assimetria
+            # ----------------------------------------------------------------
+            feat["dangerous_dominance"] = _da_h - _da_a   # + = home domina
+            feat["corner_dominance"]    = c_home - c_away  # equivale a corners_diff
+            feat["one_sided_game"]      = abs(c_home - c_away)
+
+            # ----------------------------------------------------------------
+            # Expected corners pelo minuto + resíduo + flags
+            # ----------------------------------------------------------------
+            _league_avg_v = league_avg_map.get(str(event_id)) if league_avg_map else None
+            _exp_by_min = (round(_league_avg_v * snap_min / 90, 4)
+                           if _league_avg_v is not None else None)
+            feat["expected_corners_by_minute"] = _exp_by_min
+            if _exp_by_min is not None:
+                _res = round(c_total - _exp_by_min, 4)
+                feat["residual_corners"]        = _res
+                feat["overperformance_flag"]    = int(_res >  1.5)
+                feat["underperformance_flag"]   = int(_res < -1.5)
+            else:
+                feat["residual_corners"]        = None
+                feat["overperformance_flag"]    = 0
+                feat["underperformance_flag"]   = 0
+
+            # ----------------------------------------------------------------
+            # Intensidade 1º vs 2º tempo (só snap > 45)
+            # ----------------------------------------------------------------
+            if snap_min > 45 and "first_half_corners" in feat:
+                _fh = feat.get("first_half_corners") or 0
+                _fh_rate  = _fh / 45
+                _sh_rate2 = feat.get("second_half_rate") or 0
+                feat["intensity_drop"]           = round(_fh_rate - _sh_rate2, 4)
+                feat["second_half_decay_factor"] = round(
+                    _sh_rate2 / max(_fh_rate, 0.01), 4)
+                _ff = feat.get("fatigue_factor") or 1.0
+                feat["tempo_adjusted_rate"] = round(feat["corners_rate_per_min"] * _ff, 4)
+            else:
+                feat["intensity_drop"]           = None
+                feat["second_half_decay_factor"] = None
+                feat["tempo_adjusted_rate"]      = None
+
             # --- Features pré-jogo do panorama ---
             # Odds pré-jogo
             for col in ["corners_line", "corners_over_odds", "corners_under_odds",
