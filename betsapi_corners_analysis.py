@@ -593,6 +593,112 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                 feat["ht_score_home"] = None
                 feat["ht_score_away"] = None
 
+            # ----------------------------------------------------------------
+            # Game state avançado
+            # ----------------------------------------------------------------
+            feat["is_home_losing"] = int(score_h < score_a)
+            feat["is_away_losing"] = int(score_a < score_h)
+            _is_losing = int(score_h != score_a)
+
+            # Pressão do time perdendo relativa ao total de ataques
+            _total_attacks = (last.get("attacks_home") or 0) + (last.get("attacks_away") or 0)
+            _total_dangerous = ((last.get("dangerous_attacks_home") or 0) +
+                                (last.get("dangerous_attacks_away") or 0))
+            if score_h < score_a:
+                _losing_attacks   = last.get("attacks_home") or 0
+                _losing_dangerous = last.get("dangerous_attacks_home") or 0
+            elif score_a < score_h:
+                _losing_attacks   = last.get("attacks_away") or 0
+                _losing_dangerous = last.get("dangerous_attacks_away") or 0
+            else:
+                _losing_attacks   = 0
+                _losing_dangerous = 0
+
+            feat["losing_team_attack_share"]    = round(_losing_attacks / max(_total_attacks, 1), 4)
+            feat["losing_team_dangerous_ratio"] = round(_losing_dangerous / max(_total_dangerous, 1), 4)
+
+            # Urgency: quanto mais tempo perdendo faltando + menos tempo → mais urgente
+            feat["urgency_index"]    = _is_losing * (90 - snap_min)
+            feat["urgency_weighted"] = round(_is_losing / max(90 - snap_min, 1), 4)
+
+            # ----------------------------------------------------------------
+            # Pressão ofensiva últimos 5 / 10 min (ataques e chutes)
+            # ----------------------------------------------------------------
+            _att_last5_h  = _last_n_minutes(until, snap_min, 5,  "attacks_home")
+            _att_last5_a  = _last_n_minutes(until, snap_min, 5,  "attacks_away")
+            _att_last10_h = _last_n_minutes(until, snap_min, 10, "attacks_home")
+            _att_last10_a = _last_n_minutes(until, snap_min, 10, "attacks_away")
+            _da_last5_h   = _last_n_minutes(until, snap_min, 5,  "dangerous_attacks_home")
+            _da_last5_a   = _last_n_minutes(until, snap_min, 5,  "dangerous_attacks_away")
+            _da_last10_h  = _last_n_minutes(until, snap_min, 10, "dangerous_attacks_home")
+            _da_last10_a  = _last_n_minutes(until, snap_min, 10, "dangerous_attacks_away")
+            _son_last5_h  = _last_n_minutes(until, snap_min, 5,  "shots_on_target_home")
+            _son_last5_a  = _last_n_minutes(until, snap_min, 5,  "shots_on_target_away")
+            _soff_last5_h = _last_n_minutes(until, snap_min, 5,  "shots_off_target_home")
+            _soff_last5_a = _last_n_minutes(until, snap_min, 5,  "shots_off_target_away")
+
+            feat["attacks_last_5min"]          = (_att_last5_h  or 0) + (_att_last5_a  or 0)
+            feat["attacks_last_10min"]         = (_att_last10_h or 0) + (_att_last10_a or 0)
+            feat["dangerous_attacks_last_5min"]  = (_da_last5_h  or 0) + (_da_last5_a  or 0)
+            feat["dangerous_attacks_last_10min"] = (_da_last10_h or 0) + (_da_last10_a or 0)
+            feat["shots_last_5min"] = ((_son_last5_h or 0) + (_son_last5_a or 0) +
+                                       (_soff_last5_h or 0) + (_soff_last5_a or 0))
+
+            # Pressure acceleration: ritmo atual (last 5 min) vs ritmo médio do jogo
+            _avg_att_rate = _total_attacks / max(snap_min, 1)
+            feat["pressure_acceleration"] = round(
+                (feat["attacks_last_5min"] / 5) / max(_avg_att_rate, 0.01), 4)
+
+            # Dominância por time (share de ataques e ataques perigosos)
+            feat["attack_share_home"]    = round((last.get("attacks_home") or 0) / max(_total_attacks, 1), 4)
+            feat["attack_share_away"]    = round((last.get("attacks_away") or 0) / max(_total_attacks, 1), 4)
+            feat["dangerous_share_home"] = round((last.get("dangerous_attacks_home") or 0) / max(_total_dangerous, 1), 4)
+            feat["dangerous_share_away"] = round((last.get("dangerous_attacks_away") or 0) / max(_total_dangerous, 1), 4)
+
+            # Momentum ratios: atividade recente / total acumulado
+            feat["corners_momentum_ratio"] = round(feat["corners_last_10min"] / max(c_total, 1), 4)
+            feat["attacks_momentum_ratio"] = round(feat["attacks_last_10min"] / max(_total_attacks, 1), 4)
+
+            # Qualidade de chute: chutes por ataque perigoso
+            feat["shots_per_dangerous_attack"] = round(
+                total_shots / max(_total_dangerous, 1), 4)
+
+            # ----------------------------------------------------------------
+            # Time since last corner / shot / dangerous attack (streaks)
+            # ----------------------------------------------------------------
+            def _time_since_last_event(df_until, col_home, col_away, current_min):
+                """Minutos desde o último evento que incrementou a contagem acumulada."""
+                if col_home not in df_until.columns:
+                    return None
+                total_s = df_until[col_home].fillna(0)
+                if col_away in df_until.columns:
+                    total_s = total_s + df_until[col_away].fillna(0)
+                diff = total_s.diff()
+                events = df_until[diff > 0]
+                if events.empty:
+                    return current_min  # nenhum evento ainda
+                last_ev_min = events.iloc[-1].get("minute")
+                if last_ev_min is None:
+                    return None
+                return int(current_min - last_ev_min)
+
+            feat["time_since_last_corner"] = _time_since_last_event(
+                until, "corners_home", "corners_away", snap_min)
+            feat["time_since_last_shot"] = _time_since_last_event(
+                until, "shots_on_target_home", "shots_on_target_away", snap_min)
+            feat["time_since_last_dangerous_attack"] = _time_since_last_event(
+                until, "dangerous_attacks_home", "dangerous_attacks_away", snap_min)
+
+            # ----------------------------------------------------------------
+            # Não-linearidade do tempo
+            # ----------------------------------------------------------------
+            feat["snap_minute_sq"] = snap_min ** 2
+            feat["phase_of_game"]  = (0 if snap_min <= 30 else
+                                      1 if snap_min <= 60 else
+                                      2 if snap_min <= 75 else 3)
+            feat["is_last_15min"]      = int(snap_min >= 75)
+            feat["losing_in_last_15"]  = int(snap_min >= 75 and score_h != score_a)
+
             # --- Features pré-jogo do panorama ---
             # Odds pré-jogo
             for col in ["corners_line", "corners_over_odds", "corners_under_odds",
