@@ -1166,6 +1166,22 @@ try:
         # Não-linearidade do tempo
         "snap_minute_sq", "phase_of_game",
         "is_last_15min", "losing_in_last_15",
+        # Taxas por estado de placar
+        "losing_team_corners_rate", "winning_team_corners_rate",
+        "pressure_when_losing",
+        # Qualidade da pressão e distribuição de campo
+        "pressure_ratio", "field_tilt_proxy",
+        # Aceleração e momentum
+        "acceleration_corners", "momentum_score",
+        # Game regime
+        "game_regime",
+        # Dominância ofensiva
+        "dangerous_dominance", "corner_dominance", "one_sided_game",
+        # Esperado vs real (resíduo)
+        "expected_corners_by_minute", "residual_corners",
+        "overperformance_flag", "underperformance_flag",
+        # Dinâmica 1º/2º tempo
+        "intensity_drop", "second_half_decay_factor", "tempo_adjusted_rate",
     ]
 
     # Features de momentum (só disponíveis para minutos > 15)
