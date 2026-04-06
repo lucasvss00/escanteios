@@ -1622,7 +1622,9 @@ try:
             "dynamic_line_accuracy": round(accuracy_dyn, 4),
             "dynamic_line_roi":      round(roi_dyn, 4),
             "dynamic_line_brier":    round(brier_dyn, 4),
-            "dynamic_line_n_bets":   int(n_model) if n_model > 0 else int(n_total),
+            "dynamic_line_n_bets":   int(n_best),
+            "dynamic_line_method":   best_method,
+            "dynamic_line_thresh":   best_thresh,
         }
 
     # --- Salva metadata ---
