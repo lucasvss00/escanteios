@@ -1374,41 +1374,112 @@ try:
                 print(f"    Faixa {lo:2d}-{hi:2d}: MAE={mae_f:.2f}  viés={bias:+.2f}  (n={mask.sum():,})")
 
         # ==================================================================
-        # 6f. Avaliação da linha dinâmica
+        # 6f. Avaliação da linha dinâmica — seleção de método probabilístico
         #
         # Linha = corners_acumulados + (minutos_restantes / 10)
         # Arredondada para .0 ou .5 mais próximo.
         #
-        # Avalia 3 estratégias:
-        #   (A) Baseline: apostar Over SEMPRE
-        #   (B) Modelo: apostar Over quando pred > linha
-        #   (C) Probabilidade: apostar Over quando P(over) > threshold
+        # Compara 4 formas de converter predição → P(Over linha):
+        #   (1) Normal    : 1 - Φ(line | μ=pred, σ=RMSE)
+        #                   Simétrica, contínua — baseline
+        #   (2) Poisson   : 1 - CDF_Poisson(floor(line) | λ=pred)
+        #                   Distribuição natural de contagens discretas
+        #   (3) Neg.Binom : 1 - CDF_NB(floor(line) | μ=pred, r=estimado no cal)
+        #                   Poisson + overdispersion (variância > média)
+        #                   — mais realista para escanteios
+        #   (4) Logística : regressão logística (pred − line) → P(over)
+        #                   Fitada no cal set — calibração data-driven
+        #
+        # Seleciona o método com menor Brier Score no cal set.
+        # Aposta quando P(over) > threshold (50%…70%).
         # ==================================================================
         ODDS_OVER = 1.83
         BREAKEVEN = 1.0 / ODDS_OVER
-
         remaining_minutes = 90 - snap_min
-        if "corners_total_so_far" in X_test.columns:
-            corners_so_far_test = X_test["corners_total_so_far"].values
+
+        # Linha dinâmica (test e cal)
+        csf_test = X_test["corners_total_so_far"].values if "corners_total_so_far" in X_test.columns else np.zeros(len(X_test))
+        csf_cal  = X_cal["corners_total_so_far"].values  if "corners_total_so_far" in X_cal.columns  else np.zeros(len(X_cal))
+        dynamic_line     = np.round((csf_test + remaining_minutes / 10.0) * 2) / 2
+        dynamic_line_cal = np.round((csf_cal  + remaining_minutes / 10.0) * 2) / 2
+
+        over_actual     = (y_test.values > dynamic_line).astype(int)
+        over_actual_cal = (y_cal.values  > dynamic_line_cal).astype(int)
+
+        # Predições no cal set com a mesma calibração usada no test
+        preds_cal_best = calibrator.predict(preds_cal_raw) if use_calibration else preds_cal_raw
+        preds_cal_c    = np.clip(preds_cal_best, 0.1, 60.0)
+        preds_test_c   = np.clip(preds_best,     0.1, 60.0)
+        fl_test = np.floor(dynamic_line).astype(int)
+        fl_cal  = np.floor(dynamic_line_cal).astype(int)
+
+        # ---- (1) Normal σ=RMSE ----
+        sigma_n = max(rmse_raw, 0.5)
+        p_normal_test = 1.0 - sp_norm.cdf(dynamic_line,     loc=preds_test_c, scale=sigma_n)
+        p_normal_cal  = 1.0 - sp_norm.cdf(dynamic_line_cal, loc=preds_cal_c,  scale=sigma_n)
+
+        # ---- (2) Poisson ----
+        # P(X > L) = P(X >= floor(L)+1) = 1 - CDF(floor(L))  para X discreto
+        p_poisson_test = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
+                                   for fl, m in zip(fl_test, preds_test_c)])
+        p_poisson_cal  = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
+                                   for fl, m in zip(fl_cal, preds_cal_c)])
+
+        # ---- (3) Negative Binomial — estima r de overdispersion no cal set ----
+        # Var(Y|μ) = μ + μ²/r  →  r = mean(μ)² / (Var_residuos - mean(μ))
+        _resid_var  = float(np.mean((y_cal.values - preds_cal_c) ** 2))
+        _mu_mean    = float(np.mean(preds_cal_c))
+        nb_r = float(np.clip(_mu_mean ** 2 / max(_resid_var - _mu_mean, 0.5), 0.5, 100.0))
+
+        p_nb_test = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
+                               for fl, m in zip(fl_test, preds_test_c)])
+        p_nb_cal  = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
+                               for fl, m in zip(fl_cal, preds_cal_c)])
+
+        # ---- (4) Logística calibrada no cal set ----
+        # Feature: pred - linha  (positivo = modelo acha Over, negativo = Under)
+        X_lcal  = (preds_cal_c  - dynamic_line_cal).reshape(-1, 1)
+        X_ltest = (preds_test_c - dynamic_line).reshape(-1, 1)
+        if len(np.unique(over_actual_cal)) == 2:
+            log_cal = LogisticRegression(C=1.0, max_iter=500, solver="lbfgs")
+            log_cal.fit(X_lcal, over_actual_cal)
+            p_logistic_test = log_cal.predict_proba(X_ltest)[:, 1]
+            p_logistic_cal  = log_cal.predict_proba(X_lcal)[:, 1]
         else:
-            corners_so_far_test = np.zeros(len(X_test))
+            p_logistic_test = p_normal_test.copy()
+            p_logistic_cal  = p_normal_cal.copy()
+            log_cal = None
 
-        raw_line = corners_so_far_test + remaining_minutes / 10.0
-        dynamic_line = np.round(raw_line * 2) / 2  # arredonda para .0 ou .5
+        # ---- Seleciona método pelo menor Brier Score no cal set ----
+        methods: dict[str, tuple] = {
+            "Normal":   (p_normal_test,   p_normal_cal),
+            "Poisson":  (p_poisson_test,  p_poisson_cal),
+            "NegBinom": (p_nb_test,       p_nb_cal),
+            "Logistic": (p_logistic_test, p_logistic_cal),
+        }
+        brier_cal_scores = {
+            name: float(np.mean((p_cal - over_actual_cal) ** 2))
+            for name, (_, p_cal) in methods.items()
+        }
+        best_method = min(brier_cal_scores, key=brier_cal_scores.get)
+        p_over = methods[best_method][0]
 
-        over_actual = (y_test.values > dynamic_line).astype(int)
+        print(f"\n  Método probabilístico (seleção por Brier no cal set):")
+        print(f"    {'Método':<12s}  {'Brier(cal)':>10s}")
+        for mname, bv in brier_cal_scores.items():
+            mark = "  ← SELECIONADO" if mname == best_method else ""
+            print(f"    {mname:<12s}  {bv:>10.4f}{mark}")
+        if best_method == "NegBinom":
+            print(f"    (NegBinom r={nb_r:.2f}  — overdispersion vs Poisson)")
 
-        # P(Over) via distribuição normal centrada na predição, σ = RMSE
-        sigma = max(rmse_raw, 0.5)
-        p_over = 1.0 - sp_norm.cdf(dynamic_line, loc=preds_best, scale=sigma)
         brier_all = float(np.mean((p_over - over_actual) ** 2))
 
         # --- (A) Baseline: apostar Over SEMPRE ---
-        n_total = len(y_test)
-        wins_all = over_actual.sum()
-        acc_all = wins_all / n_total
+        n_total    = len(y_test)
+        wins_all   = over_actual.sum()
+        acc_all    = wins_all / n_total
         profit_all = wins_all * (ODDS_OVER - 1) - (n_total - wins_all)
-        roi_all = profit_all / n_total
+        roi_all    = profit_all / n_total
 
         print(f"\n  Linha dinâmica  (corners_atual + {remaining_minutes}/10 → arred. .0/.5):")
         print(f"    Linha média           : {dynamic_line.mean():.2f}  "
@@ -1421,55 +1492,43 @@ try:
         print(f"        Lucro             : {profit_all:+.1f} unidades")
         print(f"        Brier Score       : {brier_all:.4f}")
 
-        # --- (B) Modelo: apostar Over quando pred > linha ---
-        mask_model = preds_best > dynamic_line
-        n_model = mask_model.sum()
-        if n_model > 0:
-            wins_model = over_actual[mask_model].sum()
-            acc_model = wins_model / n_model
-            profit_model = wins_model * (ODDS_OVER - 1) - (n_model - wins_model)
-            roi_model = profit_model / n_model
-            brier_model = float(np.mean((p_over[mask_model] - over_actual[mask_model]) ** 2))
-            yield_model = profit_model / n_total  # yield sobre universo total
-        else:
-            acc_model = roi_model = brier_model = yield_model = 0.0
-            profit_model = 0.0
-
-        print(f"\n    (B) MODELO — Over quando pred > linha:")
-        print(f"        Apostas           : {n_model:,} / {n_total:,} ({n_model/n_total:.0%} selecionadas)")
-        print(f"        Acurácia          : {acc_model:.1%}")
-        print(f"        ROI               : {roi_model:+.1%}")
-        print(f"        Lucro             : {profit_model:+.1f} unidades")
-        print(f"        Yield (s/ total)  : {yield_model:+.1%}")
-        print(f"        Brier Score       : {brier_model:.4f}")
-
-        # --- (C) Probabilidade: thresholds 55%, 60%, 65% ---
-        print(f"\n    (C) PROBABILIDADE — Over quando P(over) > threshold:")
+        # --- (B) P(over) via método selecionado — filtro por threshold ---
+        print(f"\n    (B) P(over) [{best_method}] — filtro por threshold:")
         print(f"        {'Thresh':>7s}  {'Apostas':>8s}  {'Acur':>6s}  {'ROI':>8s}  {'Lucro':>8s}  {'Brier':>7s}")
-        best_roi_thresh = 0.0
-        best_thresh = 0.55
+        best_roi_thresh = -999.0
+        best_thresh     = 0.55
         for thresh in [0.50, 0.55, 0.60, 0.65, 0.70]:
             mask_t = p_over >= thresh
-            n_t = mask_t.sum()
+            n_t    = mask_t.sum()
             if n_t > 0:
-                wins_t = over_actual[mask_t].sum()
-                acc_t = wins_t / n_t
+                wins_t   = over_actual[mask_t].sum()
+                acc_t    = wins_t / n_t
                 profit_t = wins_t * (ODDS_OVER - 1) - (n_t - wins_t)
-                roi_t = profit_t / n_t
-                brier_t = float(np.mean((p_over[mask_t] - over_actual[mask_t]) ** 2))
+                roi_t    = profit_t / n_t
+                brier_t  = float(np.mean((p_over[mask_t] - over_actual[mask_t]) ** 2))
                 if roi_t > best_roi_thresh:
                     best_roi_thresh = roi_t
-                    best_thresh = thresh
+                    best_thresh     = thresh
             else:
                 acc_t = roi_t = brier_t = 0.0
                 profit_t = 0.0
             print(f"        {thresh:>6.0%}  {n_t:>8,}  {acc_t:>5.1%}  "
                   f"{roi_t:>+7.1%}  {profit_t:>+7.1f}  {brier_t:>7.4f}")
 
-        # Guarda métricas para metadata (usa estratégia B como principal)
-        accuracy_dyn = acc_model if n_model > 0 else acc_all
-        roi_dyn = roi_model if n_model > 0 else roi_all
-        brier_dyn = brier_model if n_model > 0 else brier_all
+        # Guarda métricas do melhor threshold para metadata
+        mask_best = p_over >= best_thresh
+        n_best    = mask_best.sum()
+        if n_best > 0:
+            wins_b     = over_actual[mask_best].sum()
+            accuracy_dyn = wins_b / n_best
+            profit_b   = wins_b * (ODDS_OVER - 1) - (n_best - wins_b)
+            roi_dyn    = profit_b / n_best
+            brier_dyn  = float(np.mean((p_over[mask_best] - over_actual[mask_best]) ** 2))
+        else:
+            accuracy_dyn = acc_all
+            roi_dyn      = roi_all
+            brier_dyn    = brier_all
+            n_best       = n_total
 
         # ==================================================================
         # 6c. Quantile regression (P10, P50, P90)
