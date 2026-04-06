@@ -1042,6 +1042,9 @@ try:
     from sklearn.metrics import mean_absolute_error, mean_squared_error
     from sklearn.isotonic import IsotonicRegression
     from scipy.stats import norm as sp_norm
+    from scipy.stats import poisson as sp_poisson
+    from scipy.stats import nbinom as sp_nbinom
+    from sklearn.linear_model import LogisticRegression
     import xgboost as xgb
     import joblib
 
