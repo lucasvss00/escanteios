@@ -693,6 +693,10 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
             # Não-linearidade do tempo
             # ----------------------------------------------------------------
             feat["snap_minute_sq"] = snap_min ** 2
+            feat["snap_minute_sqrt"]  = round(snap_min ** 0.5, 4)
+            feat["snap_minute_log"]   = round(np.log(max(snap_min, 1)), 4)
+            feat["remaining_time_sq"] = (90 - snap_min) ** 2
+            feat["time_ratio"]        = round(snap_min / 90, 4)
             feat["phase_of_game"]  = (0 if snap_min <= 30 else
                                       1 if snap_min <= 60 else
                                       2 if snap_min <= 75 else 3)
