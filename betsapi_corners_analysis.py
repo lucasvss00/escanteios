@@ -1267,7 +1267,9 @@ try:
         "time_since_last_corner", "time_since_last_shot",
         "time_since_last_dangerous_attack",
         # Não-linearidade do tempo
-        "snap_minute_sq", "phase_of_game",
+        "snap_minute_sq", "snap_minute_sqrt", "snap_minute_log",
+        "remaining_time_sq", "time_ratio",
+        "phase_of_game",
         "is_last_15min", "losing_in_last_15",
         # Taxas por estado de placar
         "losing_team_corners_rate", "winning_team_corners_rate",
