@@ -1015,6 +1015,8 @@ def _last_n_minutes(df, current_min, n, col):
 import sys as _sys
 _FEATURES_PATH = DATA_DIR / "features_ml.parquet"
 _FORCE_REBUILD = "--rebuild" in _sys.argv
+_FORCE_RETUNE  = "--retune"  in _sys.argv
+_HPARAMS_PATH  = DATA_DIR / "optuna_hparams.joblib"
 
 def _snap_mtime():
     """Retorna o maior mtime entre os dois parquets de origem."""
