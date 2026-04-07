@@ -1108,15 +1108,7 @@ corr = (
 )
 print(corr.round(3).to_string())
 
-# %%
-# =============================================================================
-# 5. SALVAR DATASET DE FEATURES
-# =============================================================================
-out_pq  = DATA_DIR / "features_ml.parquet"
-out_csv = DATA_DIR / "features_ml.csv"
-df_features.to_parquet(out_pq, index=False)
-df_features.to_csv(out_csv, index=False)
-print(f"\nDataset de features salvo em:\n  {out_pq}\n  {out_csv}")
+# (features já salvas no bloco de cache acima)
 
 # %%
 # =============================================================================
