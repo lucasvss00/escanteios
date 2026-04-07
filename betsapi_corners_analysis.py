@@ -1639,8 +1639,8 @@ try:
         fl_cal  = np.floor(dynamic_line_cal).astype(int)
 
         # ---- (b) Sigma heteroscedástico (q10-q90) ----
-        sigma_het_test = np.maximum(p90_test - p10_test, 0.5) / (2 * 1.28)
-        sigma_het_cal  = np.maximum(p90_cal  - p10_cal,  0.5) / (2 * 1.28)
+        sigma_het_test = np.maximum(p90_test - p10_test, 1.5) / (2 * 1.28)
+        sigma_het_cal  = np.maximum(p90_cal  - p10_cal,  1.5) / (2 * 1.28)
 
         # ---- (1) Normal heteroscedástico ----
         p_normal_test = 1.0 - sp_norm.cdf(dynamic_line,     loc=preds_test_c, scale=sigma_het_test)
