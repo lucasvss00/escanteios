@@ -1755,6 +1755,24 @@ try:
         roi_all  = pf_all / n_total
         brier_all = float(np.mean((p_over - over_actual) ** 2))
 
+        # ---- Diagnóstico de sharpness: distribuição de P(over) ----
+        print(f"\n  Distribuição P(over) [{best_method}]  (sharpness):")
+        _bins = [0.0, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 1.01]
+        _labels = ["<35%","35-40%","40-45%","45-50%","50-55%","55-60%","60-65%","65-70%",">70%"]
+        for _lb, _lo, _hi in zip(_labels, _bins[:-1], _bins[1:]):
+            _m = (p_over >= _lo) & (p_over < _hi)
+            _n = _m.sum()
+            _pct = _n / len(p_over)
+            _bar = "█" * int(_pct * 40)
+            _acc_str = ""
+            if _n > 0:
+                _acc_str = f"  acur={over_actual[_m].mean():.0%}"
+            print(f"    {_lb:>8s}: {_n:>5,} ({_pct:>4.0%}) {_bar}{_acc_str}")
+        print(f"    Média={np.mean(p_over):.3f}  Std={np.std(p_over):.3f}  "
+              f"Min={np.min(p_over):.3f}  Max={np.max(p_over):.3f}")
+        print(f"    > 55%: {(p_over >= 0.55).sum():,}  > 60%: {(p_over >= 0.60).sum():,}  "
+              f"> 65%: {(p_over >= 0.65).sum():,}")
+
         print(f"\n  Linha por liga  (corners + remaining × league_rate | fallback 0.1/min):")
         print(f"    Linha média test : {dynamic_line.mean():.2f}  "
               f"(min={dynamic_line.min():.1f}  max={dynamic_line.max():.1f})")
