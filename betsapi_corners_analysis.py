@@ -802,6 +802,70 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                 feat["second_half_decay_factor"] = None
                 feat["tempo_adjusted_rate"]      = None
 
+            # ----------------------------------------------------------------
+            # Novas features de pressão e ritmo
+            # ----------------------------------------------------------------
+
+            # pressure_diff: diferença bruta de ataques perigosos (home - away)
+            # (nota: dangerous_dominance já existe com o mesmo valor)
+            feat["pressure_diff"] = _da_h - _da_a
+
+            # pressure_dominance_ratio: assimetria lateral de pressão perigosa
+            feat["pressure_dominance_ratio"] = round(_da_h / (_da_a + 1), 4)
+
+            # rolling_pressure_5 / 10: taxa de ataques perigosos nos últimos 5/10 min
+            feat["rolling_pressure_5"]  = round(feat["dangerous_attacks_last_5min"]  / 5,  4)
+            feat["rolling_pressure_10"] = round(feat["dangerous_attacks_last_10min"] / 10, 4)
+
+            # da_pressure_acceleration: aceleração baseada em ataques perigosos
+            feat["da_pressure_acceleration"] = round(
+                feat["rolling_pressure_5"] - feat["rolling_pressure_10"], 4)
+
+            # losing_team_pressure_ratio: share perigoso do time perdendo
+            feat["losing_team_pressure_ratio"] = round(
+                _losing_da / (_total_dangerous + 1), 4)
+
+            # urgency: intensidade de reação × momento da partida
+            feat["urgency"] = round(
+                abs(score_h - score_a) * (snap_min / 90), 4)
+
+            # final_pressure: pressão recente relativa ao tempo restante
+            feat["final_pressure"] = round(
+                feat["dangerous_attacks_last_10min"] / (90 - snap_min + 1), 4)
+
+            # activity_spike: pico de atividade nos últimos 5 min
+            feat["activity_spike"] = (
+                feat["corners_last_5min"] +
+                feat["shots_last_5min"] +
+                feat["dangerous_attacks_last_5min"]
+            )
+
+            # corner_drought_pressure: pressão acumulada durante jejum de escanteios
+            _tslc = feat.get("time_since_last_corner") or 0
+            feat["corner_drought_pressure"] = round(_tslc * feat["pressure_ratio"], 4)
+
+            # corner_conversion: eficiência de converter pressão perigosa em escanteios
+            feat["corner_conversion"] = round(c_total / (_total_dangerous + 1), 4)
+
+            # wasted_pressure: ataques perigosos não convertidos em chutes
+            feat["wasted_pressure"] = max(_total_dangerous - total_shots, 0)
+
+            # is_high_pace / is_low_pace: ritmo atual vs média da liga
+            _league_rate = (_league_avg_v / 90) if _league_avg_v else None
+            if _league_rate:
+                feat["is_high_pace"] = int(feat["corners_rate_per_min"] > _league_rate)
+                feat["is_low_pace"]  = int(feat["corners_rate_per_min"] < _league_rate * 0.7)
+            else:
+                feat["is_high_pace"] = 0
+                feat["is_low_pace"]  = 0
+
+            # pace_shift: ritmo recente (last 10) vs ritmo do 1º tempo
+            if snap_min > 45 and feat.get("first_half_corners") is not None:
+                _fh_rate_for_shift = (feat.get("first_half_corners") or 0) / 45
+                feat["pace_shift"] = round(feat["corners_rate_last_10"] - _fh_rate_for_shift, 4)
+            else:
+                feat["pace_shift"] = 0
+
             # --- Features pré-jogo do panorama ---
             # Odds pré-jogo
             for col in ["corners_line", "corners_over_odds", "corners_under_odds",
