@@ -1489,25 +1489,41 @@ try:
         print(f"  Features: {len(available)}")
 
         # ==================================================================
-        # 6a. Modelo principal — Optuna tuning (50 trials no cal set)
+        # 6a. Modelo principal — Optuna tuning com cache de hiperparâmetros
+        #
+        # Cache: dados_escanteios/optuna_hparams.joblib
+        #   dict {snap_min: {"params": {...}, "mae_cal": float}}
+        # Fluxo:
+        #   1ª execução ou --retune  → roda Optuna (50 trials) e salva
+        #   Demais execuções         → carrega params do cache (~0s)
         # ==================================================================
-        def _xgb_trial(trial):
-            _p = dict(
-                n_estimators     = trial.suggest_int("n_estimators", 200, 800),
-                max_depth        = trial.suggest_int("max_depth", 3, 8),
-                learning_rate    = trial.suggest_float("learning_rate", 0.01, 0.10, log=True),
-                subsample        = trial.suggest_float("subsample", 0.6, 1.0),
-                colsample_bytree = trial.suggest_float("colsample_bytree", 0.5, 1.0),
-                min_child_weight = trial.suggest_int("min_child_weight", 3, 15),
-                reg_alpha        = trial.suggest_float("reg_alpha", 0.0, 1.0),
-                reg_lambda       = trial.suggest_float("reg_lambda", 0.5, 3.0),
-                random_state=42, verbosity=0, early_stopping_rounds=30,
-            )
-            _m = xgb.XGBRegressor(**_p)
-            _m.fit(X_train, y_train, eval_set=[(X_cal, y_cal)], verbose=False)
-            return mean_absolute_error(y_cal, _m.predict(X_cal))
+        # Carrega cache existente (ou vazio)
+        if _HPARAMS_PATH.exists():
+            _hparams_cache = joblib.load(_HPARAMS_PATH)
+        else:
+            _hparams_cache = {}
 
-        if _OPTUNA and len(X_train) >= 200:
+        _cached = _hparams_cache.get(snap_min)
+        _run_optuna = (_OPTUNA and len(X_train) >= 200
+                       and (_FORCE_RETUNE or _cached is None))
+
+        if _run_optuna:
+            def _xgb_trial(trial):
+                _p = dict(
+                    n_estimators     = trial.suggest_int("n_estimators", 200, 800),
+                    max_depth        = trial.suggest_int("max_depth", 3, 8),
+                    learning_rate    = trial.suggest_float("learning_rate", 0.01, 0.10, log=True),
+                    subsample        = trial.suggest_float("subsample", 0.6, 1.0),
+                    colsample_bytree = trial.suggest_float("colsample_bytree", 0.5, 1.0),
+                    min_child_weight = trial.suggest_int("min_child_weight", 3, 15),
+                    reg_alpha        = trial.suggest_float("reg_alpha", 0.0, 1.0),
+                    reg_lambda       = trial.suggest_float("reg_lambda", 0.5, 3.0),
+                    random_state=42, verbosity=0, early_stopping_rounds=30,
+                )
+                _m = xgb.XGBRegressor(**_p)
+                _m.fit(X_train, y_train, eval_set=[(X_cal, y_cal)], verbose=False)
+                return mean_absolute_error(y_cal, _m.predict(X_cal))
+
             _study = _optuna.create_study(
                 direction="minimize",
                 sampler=_optuna.samplers.TPESampler(seed=42),
@@ -1515,8 +1531,20 @@ try:
             _study.optimize(_xgb_trial, n_trials=50, show_progress_bar=False)
             _best_xgb = dict(_study.best_params)
             _best_xgb.update({"random_state": 42, "verbosity": 0, "early_stopping_rounds": 30})
-            print(f"  Optuna (50 trials): melhor MAE(cal)={_study.best_value:.3f}  "
+            # Salva no cache
+            _hparams_cache[snap_min] = {
+                "params": _best_xgb,
+                "mae_cal": round(_study.best_value, 4),
+            }
+            joblib.dump(_hparams_cache, _HPARAMS_PATH)
+            print(f"  Optuna (50 trials): MAE(cal)={_study.best_value:.3f}  "
+                  f"depth={_best_xgb['max_depth']}  lr={_best_xgb['learning_rate']:.4f}  [salvo]")
+
+        elif _cached is not None:
+            _best_xgb = _cached["params"]
+            print(f"  Hparams (cache): MAE(cal)={_cached['mae_cal']:.3f}  "
                   f"depth={_best_xgb['max_depth']}  lr={_best_xgb['learning_rate']:.4f}")
+
         else:
             _best_xgb = dict(
                 n_estimators=500, max_depth=6, learning_rate=0.03,
@@ -1524,6 +1552,7 @@ try:
                 reg_alpha=0.1, reg_lambda=1.0,
                 random_state=42, verbosity=0, early_stopping_rounds=30,
             )
+            print(f"  Hparams (default): optuna não disponível")
 
         model_mean = xgb.XGBRegressor(**_best_xgb)
         model_mean.fit(
