@@ -1480,170 +1480,12 @@ try:
                 print(f"    Faixa {lo:2d}-{hi:2d}: MAE={mae_f:.2f}  viés={bias:+.2f}  (n={mask.sum():,})")
 
         # ==================================================================
-        # 6f. Avaliação da linha dinâmica — seleção de método probabilístico
-        #
-        # Linha = corners_acumulados + (minutos_restantes / 10)
-        # Arredondada para .0 ou .5 mais próximo.
-        #
-        # Compara 4 formas de converter predição → P(Over linha):
-        #   (1) Normal    : 1 - Φ(line | μ=pred, σ=RMSE)
-        #                   Simétrica, contínua — baseline
-        #   (2) Poisson   : 1 - CDF_Poisson(floor(line) | λ=pred)
-        #                   Distribuição natural de contagens discretas
-        #   (3) Neg.Binom : 1 - CDF_NB(floor(line) | μ=pred, r=estimado no cal)
-        #                   Poisson + overdispersion (variância > média)
-        #                   — mais realista para escanteios
-        #   (4) Logística : regressão logística (pred − line) → P(over)
-        #                   Fitada no cal set — calibração data-driven
-        #
-        # Seleciona o método com menor Brier Score no cal set.
-        # Aposta quando P(over) > threshold (50%…70%).
-        # ==================================================================
-        ODDS_OVER = 1.83
-        BREAKEVEN = 1.0 / ODDS_OVER
-        remaining_minutes = 90 - snap_min
-
-        # Linha dinâmica (test e cal)
-        csf_test = X_test["corners_total_so_far"].values if "corners_total_so_far" in X_test.columns else np.zeros(len(X_test))
-        csf_cal  = X_cal["corners_total_so_far"].values  if "corners_total_so_far" in X_cal.columns  else np.zeros(len(X_cal))
-        dynamic_line     = np.round((csf_test + remaining_minutes / 10.0) * 2) / 2
-        dynamic_line_cal = np.round((csf_cal  + remaining_minutes / 10.0) * 2) / 2
-
-        over_actual     = (y_test.values > dynamic_line).astype(int)
-        over_actual_cal = (y_cal.values  > dynamic_line_cal).astype(int)
-
-        # Predições no cal set com a mesma calibração usada no test
-        preds_cal_best = calibrator.predict(preds_cal_raw) if use_calibration else preds_cal_raw
-        preds_cal_c    = np.clip(preds_cal_best, 0.1, 60.0)
-        preds_test_c   = np.clip(preds_best,     0.1, 60.0)
-        fl_test = np.floor(dynamic_line).astype(int)
-        fl_cal  = np.floor(dynamic_line_cal).astype(int)
-
-        # ---- (1) Normal σ=RMSE ----
-        sigma_n = max(rmse_raw, 0.5)
-        p_normal_test = 1.0 - sp_norm.cdf(dynamic_line,     loc=preds_test_c, scale=sigma_n)
-        p_normal_cal  = 1.0 - sp_norm.cdf(dynamic_line_cal, loc=preds_cal_c,  scale=sigma_n)
-
-        # ---- (2) Poisson ----
-        # P(X > L) = P(X >= floor(L)+1) = 1 - CDF(floor(L))  para X discreto
-        p_poisson_test = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
-                                   for fl, m in zip(fl_test, preds_test_c)])
-        p_poisson_cal  = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
-                                   for fl, m in zip(fl_cal, preds_cal_c)])
-
-        # ---- (3) Negative Binomial — estima r de overdispersion no cal set ----
-        # Var(Y|μ) = μ + μ²/r  →  r = mean(μ)² / (Var_residuos - mean(μ))
-        _resid_var  = float(np.mean((y_cal.values - preds_cal_c) ** 2))
-        _mu_mean    = float(np.mean(preds_cal_c))
-        nb_r = float(np.clip(_mu_mean ** 2 / max(_resid_var - _mu_mean, 0.5), 0.5, 100.0))
-
-        p_nb_test = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
-                               for fl, m in zip(fl_test, preds_test_c)])
-        p_nb_cal  = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
-                               for fl, m in zip(fl_cal, preds_cal_c)])
-
-        # ---- (4) Logística calibrada no cal set ----
-        # Feature: pred - linha  (positivo = modelo acha Over, negativo = Under)
-        X_lcal  = (preds_cal_c  - dynamic_line_cal).reshape(-1, 1)
-        X_ltest = (preds_test_c - dynamic_line).reshape(-1, 1)
-        if len(np.unique(over_actual_cal)) == 2:
-            log_cal = LogisticRegression(C=1.0, max_iter=500, solver="lbfgs")
-            log_cal.fit(X_lcal, over_actual_cal)
-            p_logistic_test = log_cal.predict_proba(X_ltest)[:, 1]
-            p_logistic_cal  = log_cal.predict_proba(X_lcal)[:, 1]
-        else:
-            p_logistic_test = p_normal_test.copy()
-            p_logistic_cal  = p_normal_cal.copy()
-            log_cal = None
-
-        # ---- Seleciona método pelo menor Brier Score no cal set ----
-        methods: dict[str, tuple] = {
-            "Normal":   (p_normal_test,   p_normal_cal),
-            "Poisson":  (p_poisson_test,  p_poisson_cal),
-            "NegBinom": (p_nb_test,       p_nb_cal),
-            "Logistic": (p_logistic_test, p_logistic_cal),
-        }
-        brier_cal_scores = {
-            name: float(np.mean((p_cal - over_actual_cal) ** 2))
-            for name, (_, p_cal) in methods.items()
-        }
-        best_method = min(brier_cal_scores, key=brier_cal_scores.get)
-        p_over = methods[best_method][0]
-
-        print(f"\n  Método probabilístico (seleção por Brier no cal set):")
-        print(f"    {'Método':<12s}  {'Brier(cal)':>10s}")
-        for mname, bv in brier_cal_scores.items():
-            mark = "  ← SELECIONADO" if mname == best_method else ""
-            print(f"    {mname:<12s}  {bv:>10.4f}{mark}")
-        if best_method == "NegBinom":
-            print(f"    (NegBinom r={nb_r:.2f}  — overdispersion vs Poisson)")
-
-        brier_all = float(np.mean((p_over - over_actual) ** 2))
-
-        # --- (A) Baseline: apostar Over SEMPRE ---
-        n_total    = len(y_test)
-        wins_all   = over_actual.sum()
-        acc_all    = wins_all / n_total
-        profit_all = wins_all * (ODDS_OVER - 1) - (n_total - wins_all)
-        roi_all    = profit_all / n_total
-
-        print(f"\n  Linha dinâmica  (corners_atual + {remaining_minutes}/10 → arred. .0/.5):")
-        print(f"    Linha média           : {dynamic_line.mean():.2f}  "
-              f"(min={dynamic_line.min():.1f}  max={dynamic_line.max():.1f})")
-        print(f"    Break-even @ {ODDS_OVER:.2f}    : {BREAKEVEN:.1%}")
-        print(f"\n    (A) BASELINE — Apostar Over SEMPRE:")
-        print(f"        Apostas           : {n_total:,}")
-        print(f"        Acurácia          : {acc_all:.1%}")
-        print(f"        ROI               : {roi_all:+.1%}")
-        print(f"        Lucro             : {profit_all:+.1f} unidades")
-        print(f"        Brier Score       : {brier_all:.4f}")
-
-        # --- (B) P(over) via método selecionado — filtro por threshold ---
-        print(f"\n    (B) P(over) [{best_method}] — filtro por threshold:")
-        print(f"        {'Thresh':>7s}  {'Apostas':>8s}  {'Acur':>6s}  {'ROI':>8s}  {'Lucro':>8s}  {'Brier':>7s}")
-        best_roi_thresh = -999.0
-        best_thresh     = 0.55
-        for thresh in [0.50, 0.55, 0.60, 0.65, 0.70]:
-            mask_t = p_over >= thresh
-            n_t    = mask_t.sum()
-            if n_t > 0:
-                wins_t   = over_actual[mask_t].sum()
-                acc_t    = wins_t / n_t
-                profit_t = wins_t * (ODDS_OVER - 1) - (n_t - wins_t)
-                roi_t    = profit_t / n_t
-                brier_t  = float(np.mean((p_over[mask_t] - over_actual[mask_t]) ** 2))
-                if roi_t > best_roi_thresh:
-                    best_roi_thresh = roi_t
-                    best_thresh     = thresh
-            else:
-                acc_t = roi_t = brier_t = 0.0
-                profit_t = 0.0
-            print(f"        {thresh:>6.0%}  {n_t:>8,}  {acc_t:>5.1%}  "
-                  f"{roi_t:>+7.1%}  {profit_t:>+7.1f}  {brier_t:>7.4f}")
-
-        # Guarda métricas do melhor threshold para metadata
-        mask_best = p_over >= best_thresh
-        n_best    = mask_best.sum()
-        if n_best > 0:
-            wins_b     = over_actual[mask_best].sum()
-            accuracy_dyn = wins_b / n_best
-            profit_b   = wins_b * (ODDS_OVER - 1) - (n_best - wins_b)
-            roi_dyn    = profit_b / n_best
-            brier_dyn  = float(np.mean((p_over[mask_best] - over_actual[mask_best]) ** 2))
-        else:
-            accuracy_dyn = acc_all
-            roi_dyn      = roi_all
-            brier_dyn    = brier_all
-            n_best       = n_total
-
-        # ==================================================================
         # 6c. Quantile regression (P10, P50, P90)
         #
-        # NÃO aplica calibração isotônica nos quantis — isso colapsa
-        # os intervalos para a média. Os modelos quantile são usados raw.
+        # Treinado ANTES de 6f para fornecer sigma heteroscedástico por jogo.
+        # NÃO aplica calibração isotônica — isso colapsaria os intervalos.
         # ==================================================================
         quantile_models = {}
-
         for q_name, q_alpha in [("q10", 0.10), ("q50", 0.50), ("q90", 0.90)]:
             model_q = xgb.XGBRegressor(
                 objective="reg:quantileerror",
@@ -1660,25 +1502,20 @@ try:
                 verbosity=0,
                 early_stopping_rounds=30,
             )
-            model_q.fit(
-                X_train, y_train,
-                eval_set=[(X_cal, y_cal)],
-                verbose=False,
-            )
+            model_q.fit(X_train, y_train, eval_set=[(X_cal, y_cal)], verbose=False)
             quantile_models[q_name] = model_q
 
-        # Avalia intervalo de confiança no teste (sem calibração)
         p10_test = quantile_models["q10"].predict(X_test)
         p50_test = quantile_models["q50"].predict(X_test)
         p90_test = quantile_models["q90"].predict(X_test)
+        p10_cal  = quantile_models["q10"].predict(X_cal)
+        p90_cal  = quantile_models["q90"].predict(X_cal)
 
-        coverage = ((y_test.values >= p10_test) & (y_test.values <= p90_test)).mean()
+        coverage       = ((y_test.values >= p10_test) & (y_test.values <= p90_test)).mean()
         interval_width = (p90_test - p10_test).mean()
-        mae_p50 = mean_absolute_error(y_test, p50_test)
-
-        # Cobertura real por quantil (sanity check)
-        below_p10 = (y_test.values < p10_test).mean()
-        above_p90 = (y_test.values > p90_test).mean()
+        mae_p50        = mean_absolute_error(y_test, p50_test)
+        below_p10      = (y_test.values < p10_test).mean()
+        above_p90      = (y_test.values > p90_test).mean()
 
         print(f"\n  Quantile regression:")
         print(f"    P50 MAE           : {mae_p50:.3f}")
@@ -1686,6 +1523,297 @@ try:
         print(f"    Cobertura P10-P90 : {coverage:.1%} (ideal: ~80%)")
         print(f"    Abaixo do P10     : {below_p10:.1%} (ideal: ~10%)")
         print(f"    Acima do P90      : {above_p90:.1%} (ideal: ~10%)")
+
+        # ==================================================================
+        # 6f. Avaliação da linha dinâmica — sistema completo de betting
+        #
+        # Melhorias vs versão anterior:
+        #   (a) Linha por liga: corners_atual + remaining × (league_avg/90)
+        #   (b) Sigma heteroscedástico: (p90-p10)/(2×1.28) por jogo
+        #   (c) Logística multi-feature (pred, diff, diff_norm, minute, contexto)
+        #   (d) XGBoost classificador direto P(over/under linha)
+        #   (e) Threshold selecionado no CAL set — sem leakage do test
+        #   (f) Edge mínimo: P(over) > break-even + MIN_EDGE
+        #   (g) Under simétrico
+        #   (h) ROI com odds reais por jogo quando disponíveis
+        #   (i) Breakdown por contexto (game_regime, phase, faixas de linha)
+        # ==================================================================
+        ODDS_OVER  = 1.83
+        ODDS_UNDER = 1.83   # default; substituído por odds reais quando disponível
+        BREAKEVEN  = 1.0 / ODDS_OVER
+        MIN_EDGE   = 0.03   # só aposta se P(over) > break-even + 3%
+        remaining_minutes = 90 - snap_min
+
+        # ---- (a) Linha dinâmica por liga ----
+        def _dline_vec(csf_arr, la_arr, rem):
+            """Usa taxa média da liga (corners/min) se disponível; fallback 0.1/min."""
+            lines = []
+            for csf, la in zip(csf_arr, la_arr):
+                try:
+                    rate = (float(la) / 90.0) if (la is not None and not np.isnan(float(la))
+                                                   and float(la) > 0) else 0.1
+                except (TypeError, ValueError):
+                    rate = 0.1
+                lines.append(np.round((csf + rem * rate) * 2) / 2)
+            return np.array(lines, dtype=float)
+
+        def _gcol(X_df, col):
+            return X_df[col].values if col in X_df.columns else np.zeros(len(X_df))
+        def _gcol_nan(X_df, col):
+            return X_df[col].values if col in X_df.columns else np.full(len(X_df), np.nan)
+
+        csf_test  = _gcol(X_test,  "corners_total_so_far")
+        csf_cal   = _gcol(X_cal,   "corners_total_so_far")
+        csf_train = _gcol(X_train, "corners_total_so_far")
+
+        def _la_list(X_df):
+            raw = _gcol_nan(X_df, "league_avg_corners")
+            return [v if not np.isnan(v) else None for v in raw]
+
+        dynamic_line       = _dline_vec(csf_test,  _la_list(X_test),  remaining_minutes)
+        dynamic_line_cal   = _dline_vec(csf_cal,   _la_list(X_cal),   remaining_minutes)
+        dynamic_line_train = _dline_vec(csf_train, _la_list(X_train), remaining_minutes)
+
+        over_actual       = (y_test.values  > dynamic_line).astype(int)
+        over_actual_cal   = (y_cal.values   > dynamic_line_cal).astype(int)
+        over_actual_train = (y_train.values > dynamic_line_train).astype(int)
+
+        preds_cal_best  = calibrator.predict(preds_cal_raw) if use_calibration else preds_cal_raw
+        preds_cal_c     = np.clip(preds_cal_best, 0.1, 60.0)
+        preds_test_c    = np.clip(preds_best,     0.1, 60.0)
+        _preds_train_raw = model_mean.predict(X_train)
+        preds_train_c   = np.clip(
+            calibrator.predict(_preds_train_raw) if use_calibration else _preds_train_raw,
+            0.1, 60.0)
+
+        fl_test = np.floor(dynamic_line).astype(int)
+        fl_cal  = np.floor(dynamic_line_cal).astype(int)
+
+        # ---- (b) Sigma heteroscedástico (q10-q90) ----
+        sigma_het_test = np.maximum(p90_test - p10_test, 0.5) / (2 * 1.28)
+        sigma_het_cal  = np.maximum(p90_cal  - p10_cal,  0.5) / (2 * 1.28)
+
+        # ---- (1) Normal heteroscedástico ----
+        p_normal_test = 1.0 - sp_norm.cdf(dynamic_line,     loc=preds_test_c, scale=sigma_het_test)
+        p_normal_cal  = 1.0 - sp_norm.cdf(dynamic_line_cal, loc=preds_cal_c,  scale=sigma_het_cal)
+
+        # ---- (2) Poisson ----
+        p_poisson_test = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
+                                   for fl, m in zip(fl_test, preds_test_c)])
+        p_poisson_cal  = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
+                                   for fl, m in zip(fl_cal, preds_cal_c)])
+
+        # ---- (3) Negative Binomial ----
+        _resid_var = float(np.mean((y_cal.values - preds_cal_c) ** 2))
+        _mu_mean   = float(np.mean(preds_cal_c))
+        nb_r = float(np.clip(_mu_mean ** 2 / max(_resid_var - _mu_mean, 0.5), 0.5, 100.0))
+        p_nb_test = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
+                               for fl, m in zip(fl_test, preds_test_c)])
+        p_nb_cal  = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
+                               for fl, m in zip(fl_cal, preds_cal_c)])
+
+        # ---- (c) Logística multi-feature ----
+        def _logfeat(pred_c, dline, X_df, min_):
+            diff = pred_c - dline
+            parts = [diff, diff / np.maximum(dline, 1.0), pred_c, dline,
+                     np.full(len(pred_c), float(min_))]
+            for col in ["game_regime", "residual_corners", "momentum_score",
+                        "corners_rate_per_min", "is_high_pace"]:
+                if col in X_df.columns:
+                    parts.append(X_df[col].fillna(0).values.astype(float))
+            return np.column_stack(parts)
+
+        X_lcal  = _logfeat(preds_cal_c,  dynamic_line_cal, X_cal,  snap_min)
+        X_ltest = _logfeat(preds_test_c, dynamic_line,     X_test, snap_min)
+        if len(np.unique(over_actual_cal)) == 2:
+            _log_clf = LogisticRegression(C=1.0, max_iter=1000, solver="lbfgs")
+            _log_clf.fit(X_lcal, over_actual_cal)
+            p_logistic_test = _log_clf.predict_proba(X_ltest)[:, 1]
+            p_logistic_cal  = _log_clf.predict_proba(X_lcal)[:, 1]
+        else:
+            p_logistic_test = p_normal_test.copy()
+            p_logistic_cal  = p_normal_cal.copy()
+
+        # ---- (d) XGBoost classificador direto ----
+        def _clffeat(pred_c, dline, X_df):
+            parts = [pred_c - dline, pred_c, dline]
+            for col in ["game_regime", "residual_corners", "momentum_score",
+                        "corners_rate_per_min", "corners_total_so_far"]:
+                if col in X_df.columns:
+                    parts.append(X_df[col].fillna(0).values.astype(float))
+            return np.column_stack(parts)
+
+        X_clf_tr = _clffeat(preds_train_c, dynamic_line_train, X_train)
+        X_clf_ca = _clffeat(preds_cal_c,   dynamic_line_cal,   X_cal)
+        X_clf_te = _clffeat(preds_test_c,  dynamic_line,       X_test)
+
+        if len(np.unique(over_actual_train)) == 2:
+            _model_clf = xgb.XGBClassifier(
+                n_estimators=300, max_depth=4, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                eval_metric="logloss", random_state=42, verbosity=0,
+                early_stopping_rounds=20,
+            )
+            _model_clf.fit(X_clf_tr, over_actual_train,
+                           eval_set=[(X_clf_ca, over_actual_cal)], verbose=False)
+            p_clf_test = _model_clf.predict_proba(X_clf_te)[:, 1]
+            p_clf_cal  = _model_clf.predict_proba(X_clf_ca)[:, 1]
+        else:
+            p_clf_test = p_normal_test.copy()
+            p_clf_cal  = p_normal_cal.copy()
+
+        # ---- Seleciona método pelo Brier no CAL set ----
+        methods: dict[str, tuple] = {
+            "Normal":   (p_normal_test,   p_normal_cal),
+            "Poisson":  (p_poisson_test,  p_poisson_cal),
+            "NegBinom": (p_nb_test,       p_nb_cal),
+            "Logistic": (p_logistic_test, p_logistic_cal),
+            "XGBClf":   (p_clf_test,      p_clf_cal),
+        }
+        brier_cal_scores = {
+            name: float(np.mean((p_cal - over_actual_cal) ** 2))
+            for name, (_, p_cal) in methods.items()
+        }
+        best_method = min(brier_cal_scores, key=brier_cal_scores.get)
+        p_over     = methods[best_method][0]
+        p_over_cal = methods[best_method][1]
+
+        print(f"\n  Método probabilístico (seleção por Brier no cal set):")
+        print(f"    {'Método':<12s}  {'Brier(cal)':>10s}")
+        for mname, bv in brier_cal_scores.items():
+            mark = "  ← SELECIONADO" if mname == best_method else ""
+            print(f"    {mname:<12s}  {bv:>10.4f}{mark}")
+        if best_method == "NegBinom":
+            print(f"    (NegBinom r={nb_r:.2f})")
+
+        # ---- (e) Threshold selecionado no CAL set (sem leakage) ----
+        best_thresh     = BREAKEVEN + MIN_EDGE
+        best_roi_on_cal = -999.0
+        for _thr in np.arange(BREAKEVEN + MIN_EDGE, 0.76, 0.01):
+            _mc = p_over_cal >= _thr
+            if _mc.sum() < 10:
+                continue
+            _wc = over_actual_cal[_mc].sum()
+            _rc = (_wc * (ODDS_OVER - 1) - (_mc.sum() - _wc)) / _mc.sum()
+            if _rc > best_roi_on_cal:
+                best_roi_on_cal = _rc
+                best_thresh     = _thr
+
+        # ---- (h) Odds reais por jogo ----
+        odds_over_t  = X_test["corners_over_odds"].values  if "corners_over_odds"  in X_test.columns else None
+        odds_under_t = X_test["corners_under_odds"].values if "corners_under_odds" in X_test.columns else None
+
+        def _profit_vec(over_arr, mask, odds_arr, default_odds, is_over=True):
+            profit = 0.0
+            idxs = np.where(mask)[0]
+            for i in idxs:
+                try:
+                    o = (float(odds_arr[i])
+                         if (odds_arr is not None and not np.isnan(float(odds_arr[i]))
+                             and float(odds_arr[i]) > 1.0)
+                         else default_odds)
+                except (TypeError, ValueError):
+                    o = default_odds
+                won = int(over_arr[i]) if is_over else int(1 - over_arr[i])
+                profit += (o - 1) * won - (1 - won)
+            n = len(idxs)
+            return profit, (profit / n if n else 0.0), n
+
+        # ---- (A) Baseline ----
+        n_total  = len(y_test)
+        wins_all = over_actual.sum()
+        acc_all  = wins_all / n_total
+        pf_all   = wins_all * (ODDS_OVER - 1) - (n_total - wins_all)
+        roi_all  = pf_all / n_total
+        brier_all = float(np.mean((p_over - over_actual) ** 2))
+
+        print(f"\n  Linha por liga  (corners + remaining × league_rate | fallback 0.1/min):")
+        print(f"    Linha média test : {dynamic_line.mean():.2f}  "
+              f"(min={dynamic_line.min():.1f}  max={dynamic_line.max():.1f})")
+        print(f"    Break-even @ {ODDS_OVER:.2f} : {BREAKEVEN:.1%}  |  Edge mín: +{MIN_EDGE:.0%}")
+        print(f"    Threshold (CAL)  : {best_thresh:.0%}  (ROI cal={best_roi_on_cal:+.1%})")
+        print(f"\n    (A) BASELINE — Over SEMPRE:")
+        print(f"        Apostas={n_total:,}  Acur={acc_all:.1%}  ROI={roi_all:+.1%}  Brier={brier_all:.4f}")
+
+        # ---- (B) Over filtrado — sweep de threshold no test ----
+        print(f"\n    (B) Over — [{best_method}] — threshold sweep:")
+        print(f"        {'Thresh':>7s}  {'Apostas':>7s}  {'Acur':>6s}  {'ROI(fix)':>9s}  "
+              f"{'ROI(real)':>9s}  {'Brier':>7s}")
+        _thresh_set = sorted({round(float(best_thresh), 2)} | {0.50, 0.55, 0.60, 0.65, 0.70})
+        for thresh in _thresh_set:
+            mask_t = p_over >= thresh
+            n_t    = mask_t.sum()
+            if n_t > 0:
+                wins_t      = over_actual[mask_t].sum()
+                acc_t       = wins_t / n_t
+                roi_fix     = (wins_t * (ODDS_OVER - 1) - (n_t - wins_t)) / n_t
+                _, roi_real, _ = _profit_vec(over_actual, mask_t, odds_over_t, ODDS_OVER, True)
+                brier_t     = float(np.mean((p_over[mask_t] - over_actual[mask_t]) ** 2))
+            else:
+                acc_t = roi_fix = roi_real = brier_t = 0.0
+            marker = "  ←" if abs(thresh - best_thresh) < 0.005 else ""
+            print(f"        {thresh:>6.0%}  {n_t:>7,}  {acc_t:>5.1%}  "
+                  f"{roi_fix:>+8.1%}  {roi_real:>+8.1%}  {brier_t:>7.4f}{marker}")
+
+        # ---- (g) Under simétrico ----
+        _thresh_under = 1.0 - best_thresh
+        mask_under = (1.0 - p_over) >= _thresh_under
+        n_u = mask_under.sum()
+        if n_u > 0:
+            wins_u     = (1 - over_actual[mask_under]).sum()
+            acc_u      = wins_u / n_u
+            roi_u_fix  = (wins_u * (ODDS_UNDER - 1) - (n_u - wins_u)) / n_u
+            _, roi_u_real, _ = _profit_vec(over_actual, mask_under, odds_under_t, ODDS_UNDER, False)
+            print(f"\n    (C) Under — P(under)>={_thresh_under:.0%}:")
+            print(f"        Apostas={n_u:,}  Acur={acc_u:.1%}  "
+                  f"ROI(fix)={roi_u_fix:+.1%}  ROI(real)={roi_u_real:+.1%}")
+        else:
+            print(f"\n    (C) Under — sem apostas com P(under)>={_thresh_under:.0%}")
+
+        # ---- (i) Breakdown por contexto ----
+        mask_best = p_over >= best_thresh
+        print(f"\n    Breakdown — [{best_method}, thresh={best_thresh:.0%}]:")
+        print(f"        {'Contexto':<26s}  {'Total':>6s}  {'Apostas':>7s}  {'Acur':>6s}  {'ROI':>8s}")
+        _ctx_rows = []
+        for _col, _lmap in [
+            ("game_regime",   {0: "Regime:LOW", 1: "Regime:NORMAL", 2: "Regime:HIGH"}),
+            ("phase_of_game", {0: "Fase:0-30",  1: "Fase:31-60",   2: "Fase:61-75", 3: "Fase:76+"}),
+        ]:
+            if _col in X_test.columns:
+                for _val, _lbl in _lmap.items():
+                    _mc = (X_test[_col] == _val).values
+                    _mb = mask_best & _mc
+                    _nb = _mb.sum()
+                    if _nb > 3:
+                        _w = over_actual[_mb].sum()
+                        _r = (_w * (ODDS_OVER - 1) - (_nb - _w)) / _nb
+                        _ctx_rows.append((_lbl, _mc.sum(), _nb, _w / _nb, _r))
+        for _lo, _hi, _lbl in [(0, 8, "Linha:<=8"), (8, 10.5, "Linha:8-10.5"),
+                                (10.5, 13, "Linha:10.5-13"), (13, 99, "Linha:>=13")]:
+            _ml = (dynamic_line > _lo) & (dynamic_line <= _hi)
+            _mb = mask_best & _ml
+            _nb = _mb.sum()
+            if _nb > 3:
+                _w = over_actual[_mb].sum()
+                _r = (_w * (ODDS_OVER - 1) - (_nb - _w)) / _nb
+                _ctx_rows.append((_lbl, _ml.sum(), _nb, _w / _nb, _r))
+        for _lbl, _ntot, _nb, _ac, _roi in _ctx_rows:
+            print(f"        {_lbl:<26s}  {_ntot:>6,}  {_nb:>7,}  {_ac:>5.1%}  {_roi:>+7.1%}")
+
+        # Armazena métricas do threshold selecionado
+        mask_best_t = p_over >= best_thresh
+        n_best = mask_best_t.sum()
+        if n_best > 0:
+            wins_b       = over_actual[mask_best_t].sum()
+            accuracy_dyn = wins_b / n_best
+            profit_b     = wins_b * (ODDS_OVER - 1) - (n_best - wins_b)
+            roi_dyn      = profit_b / n_best
+            brier_dyn    = float(np.mean((p_over[mask_best_t] - over_actual[mask_best_t]) ** 2))
+        else:
+            accuracy_dyn = acc_all
+            roi_dyn      = roi_all
+            brier_dyn    = brier_all
+            n_best       = n_total
 
         # ==================================================================
         # 6d. Feature importance (top 10)
