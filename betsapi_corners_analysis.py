@@ -1565,7 +1565,7 @@ try:
         ODDS_OVER  = 1.83
         ODDS_UNDER = 1.83   # default; substituído por odds reais quando disponível
         BREAKEVEN  = 1.0 / ODDS_OVER
-        MIN_EDGE   = 0.03   # só aposta se P(over) > break-even + 3%
+        MIN_EDGE   = 0.02   # só aposta se P(over) > break-even + 2%
         remaining_minutes = 90 - snap_min
 
         # ---- (a) Linha dinâmica por liga ----
