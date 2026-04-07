@@ -1112,6 +1112,14 @@ try:
     import xgboost as xgb
     import joblib
 
+    try:
+        import optuna as _optuna
+        _optuna.logging.set_verbosity(_optuna.logging.WARNING)
+        _OPTUNA = True
+    except ImportError:
+        _OPTUNA = False
+        print("  (optuna não instalado — usando hiperparâmetros fixos. pip install optuna)")
+
     # --- Features base (usadas por todos os minutos) ---
     BASE_FEATURE_COLS = [
         # Escanteios ao vivo

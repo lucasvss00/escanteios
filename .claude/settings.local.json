@@ -50,7 +50,11 @@
       "Bash(ls /c/Users/Lucas/AppData/Local/Programs/Python/*/python.exe)",
       "Bash(/c/Users/Lucas/AppData/Local/Programs/Python/Python313/python.exe -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
       "Bash(/c/Users/Lucas/AppData/Local/Programs/Python/Python313/python.exe -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
-      "Bash(/c/Users/Lucas/AppData/Local/Programs/Python/Python313/python.exe -c \"import ast; ast.parse\\(open\\(''c:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")"
+      "Bash(/c/Users/Lucas/AppData/Local/Programs/Python/Python313/python.exe -c \"import ast; ast.parse\\(open\\(''c:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(py -c \"import ast; ast.parse\\(open\\(''betsapi_corners_analysis.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")",
+      "Bash(/c/Users/Lucas/anaconda3/envs/Betsapi/Scripts/python.exe -c \"import ast; ast.parse\\(open\\(''c:/Users/Lucas/Desktop/FIFA/escanteios/betsapi_corners_analysis.py'', encoding=''utf-8''\\).read\\(\\)\\); print\\(''Syntax OK''\\)\")"
     ]
   }
 }
