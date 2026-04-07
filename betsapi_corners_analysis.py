@@ -1399,21 +1399,43 @@ try:
         print(f"  Features: {len(available)}")
 
         # ==================================================================
-        # 6a. Modelo principal (regressão à média — squared error)
+        # 6a. Modelo principal — Optuna tuning (50 trials no cal set)
         # ==================================================================
-        model_mean = xgb.XGBRegressor(
-            n_estimators=500,
-            max_depth=6,
-            learning_rate=0.03,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            min_child_weight=5,
-            reg_alpha=0.1,
-            reg_lambda=1.0,
-            random_state=42,
-            verbosity=0,
-            early_stopping_rounds=30,
-        )
+        def _xgb_trial(trial):
+            _p = dict(
+                n_estimators     = trial.suggest_int("n_estimators", 200, 800),
+                max_depth        = trial.suggest_int("max_depth", 3, 8),
+                learning_rate    = trial.suggest_float("learning_rate", 0.01, 0.10, log=True),
+                subsample        = trial.suggest_float("subsample", 0.6, 1.0),
+                colsample_bytree = trial.suggest_float("colsample_bytree", 0.5, 1.0),
+                min_child_weight = trial.suggest_int("min_child_weight", 3, 15),
+                reg_alpha        = trial.suggest_float("reg_alpha", 0.0, 1.0),
+                reg_lambda       = trial.suggest_float("reg_lambda", 0.5, 3.0),
+                random_state=42, verbosity=0, early_stopping_rounds=30,
+            )
+            _m = xgb.XGBRegressor(**_p)
+            _m.fit(X_train, y_train, eval_set=[(X_cal, y_cal)], verbose=False)
+            return mean_absolute_error(y_cal, _m.predict(X_cal))
+
+        if _OPTUNA and len(X_train) >= 200:
+            _study = _optuna.create_study(
+                direction="minimize",
+                sampler=_optuna.samplers.TPESampler(seed=42),
+            )
+            _study.optimize(_xgb_trial, n_trials=50, show_progress_bar=False)
+            _best_xgb = dict(_study.best_params)
+            _best_xgb.update({"random_state": 42, "verbosity": 0, "early_stopping_rounds": 30})
+            print(f"  Optuna (50 trials): melhor MAE(cal)={_study.best_value:.3f}  "
+                  f"depth={_best_xgb['max_depth']}  lr={_best_xgb['learning_rate']:.4f}")
+        else:
+            _best_xgb = dict(
+                n_estimators=500, max_depth=6, learning_rate=0.03,
+                subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                reg_alpha=0.1, reg_lambda=1.0,
+                random_state=42, verbosity=0, early_stopping_rounds=30,
+            )
+
+        model_mean = xgb.XGBRegressor(**_best_xgb)
         model_mean.fit(
             X_train, y_train,
             eval_set=[(X_cal, y_cal)],
