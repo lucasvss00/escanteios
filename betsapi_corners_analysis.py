@@ -999,22 +999,54 @@ def _last_n_minutes(df, current_min, n, col):
 
 
 # %%
-print("\nConstruindo dataset de features por minuto de snapshot...")
-df_features = build_live_features(df_snap, df_pano, df_team_hist, SNAPSHOT_MINUTES,
-                                   league_avg_map=league_avg,
-                                   league_std_map=league_std)
-print(f"Features dataset: {len(df_features):,} linhas | {df_features['event_id'].nunique():,} jogos")
-
-# %%
 # =============================================================================
-# 4. LIMPEZA BÁSICA
+# 3 / 4. CACHE DE FEATURES
+#
+# Se features_ml.parquet já existe E os dados de origem não mudaram desde a
+# última geração, carrega direto do disco — evita reconstruir do zero.
+#
+# Para forçar rebuild: delete o arquivo ou passe --rebuild na linha de comando.
+#   python betsapi_corners_analysis.py --rebuild
 # =============================================================================
-# Remove jogos sem target (dados incompletos)
-df_features = df_features[df_features["target_corners_total"].notna()]
-df_features = df_features[df_features["target_corners_total"] >= 0]
+import sys as _sys
+_FEATURES_PATH = DATA_DIR / "features_ml.parquet"
+_FORCE_REBUILD = "--rebuild" in _sys.argv
 
-# Corrige remainings negativos (erro de dados)
-df_features["target_corners_remaining"] = df_features["target_corners_remaining"].clip(lower=0)
+def _snap_mtime():
+    """Retorna o maior mtime entre os dois parquets de origem."""
+    t1 = (DATA_DIR / "snapshots_por_minuto.parquet").stat().st_mtime
+    t2 = (DATA_DIR / "panorama_jogos.parquet").stat().st_mtime
+    return max(t1, t2)
+
+def _features_fresh():
+    """True se features_ml.parquet existe e é mais recente que os dados brutos."""
+    if not _FEATURES_PATH.exists():
+        return False
+    return _FEATURES_PATH.stat().st_mtime >= _snap_mtime()
+
+if not _FORCE_REBUILD and _features_fresh():
+    print(f"\nCarregando features do cache: {_FEATURES_PATH}")
+    df_features = pd.read_parquet(_FEATURES_PATH)
+    print(f"  {len(df_features):,} linhas | {df_features['event_id'].nunique():,} jogos  (use --rebuild para regenerar)")
+else:
+    if _FORCE_REBUILD:
+        print("\n--rebuild solicitado: reconstruindo features do zero...")
+    else:
+        print("\nfeatures_ml.parquet não existe ou está desatualizado — construindo...")
+    df_features = build_live_features(df_snap, df_pano, df_team_hist, SNAPSHOT_MINUTES,
+                                       league_avg_map=league_avg,
+                                       league_std_map=league_std)
+    print(f"  {len(df_features):,} linhas | {df_features['event_id'].nunique():,} jogos")
+
+    # Limpeza básica
+    df_features = df_features[df_features["target_corners_total"].notna()]
+    df_features = df_features[df_features["target_corners_total"] >= 0]
+    df_features["target_corners_remaining"] = df_features["target_corners_remaining"].clip(lower=0)
+
+    # Salva no disco
+    df_features.to_parquet(_FEATURES_PATH, index=False)
+    df_features.to_csv(DATA_DIR / "features_ml.csv", index=False)
+    print(f"  Cache salvo → {_FEATURES_PATH}  ({_FEATURES_PATH.stat().st_size / 1e6:.1f} MB)")
 
 print(f"\nApós limpeza: {len(df_features):,} amostras")
 
