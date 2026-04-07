@@ -1249,6 +1249,18 @@ try:
         "overperformance_flag", "underperformance_flag",
         # Dinâmica 1º/2º tempo
         "intensity_drop", "second_half_decay_factor", "tempo_adjusted_rate",
+        # Pressão e ritmo (novas)
+        "pressure_diff", "pressure_dominance_ratio",
+        "rolling_pressure_5", "rolling_pressure_10", "da_pressure_acceleration",
+        "losing_team_pressure_ratio",
+        "urgency",
+        "final_pressure",
+        "activity_spike",
+        "corner_drought_pressure",
+        "corner_conversion",
+        "wasted_pressure",
+        "is_high_pace", "is_low_pace",
+        "pace_shift",
     ]
 
     # Features de momentum (só disponíveis para minutos > 15)
