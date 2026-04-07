@@ -1309,6 +1309,31 @@ try:
 
     TARGET = "target_corners_total"
 
+    # ------------------------------------------------------------------
+    # Verificação de integridade do cache: se alguma feature de
+    # BASE_FEATURE_COLS ou MOMENTUM_FEATURE_COLS não existe no parquet
+    # carregado, rebuild automático — sem precisar deletar o arquivo.
+    # ------------------------------------------------------------------
+    _all_expected = set(BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS)
+    _missing_feats = _all_expected - set(df_features.columns)
+    if _missing_feats:
+        print(f"\n  Cache desatualizado — {len(_missing_feats)} feature(s) faltando:")
+        for _f in sorted(_missing_feats):
+            print(f"    • {_f}")
+        print("  Reconstruindo features do zero...\n")
+        df_features = build_live_features(
+            df_snap, df_pano, df_team_hist, SNAPSHOT_MINUTES,
+            league_avg_map=league_avg, league_std_map=league_std,
+        )
+        df_features = df_features[df_features["target_corners_total"].notna()]
+        df_features = df_features[df_features["target_corners_total"] >= 0]
+        df_features["target_corners_remaining"] = df_features["target_corners_remaining"].clip(lower=0)
+        df_features.to_parquet(_FEATURES_PATH, index=False)
+        df_features.to_csv(DATA_DIR / "features_ml.csv", index=False)
+        print(f"  Cache atualizado → {_FEATURES_PATH}  "
+              f"({_FEATURES_PATH.stat().st_size / 1e6:.1f} MB)")
+        print(f"  {len(df_features):,} linhas | {df_features['event_id'].nunique():,} jogos")
+
     def prepare_features(
         df: pd.DataFrame,
         feature_cols: list[str],
