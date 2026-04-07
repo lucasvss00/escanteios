@@ -1711,11 +1711,15 @@ try:
             print(f"    (NegBinom r={nb_r:.2f})")
 
         # ---- (e) Threshold selecionado no CAL set (sem leakage) ----
+        # Threshold max = 0.68 para garantir volume mínimo de apostas
+        # Mínimo de 30 apostas no cal set para estimar ROI confiável
+        _THRESH_MAX  = 0.68
+        _MIN_CAL_BET = max(30, int(len(y_cal) * 0.05))  # pelo menos 5% do cal set
         best_thresh     = BREAKEVEN + MIN_EDGE
         best_roi_on_cal = -999.0
-        for _thr in np.arange(BREAKEVEN + MIN_EDGE, 0.76, 0.01):
+        for _thr in np.arange(BREAKEVEN + MIN_EDGE, _THRESH_MAX + 0.001, 0.01):
             _mc = p_over_cal >= _thr
-            if _mc.sum() < 10:
+            if _mc.sum() < _MIN_CAL_BET:
                 continue
             _wc = over_actual_cal[_mc].sum()
             _rc = (_wc * (ODDS_OVER - 1) - (_mc.sum() - _wc)) / _mc.sum()
