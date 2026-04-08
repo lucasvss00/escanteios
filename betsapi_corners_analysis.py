@@ -2329,13 +2329,10 @@ try:
 
                 # (5) XGBoost classificador (fit no TRAIN)
                 def _wf_clffeat(pc, dl, X_df):
-                    parts = [pc - dl, pc, dl]
-                    for col in ["game_regime", "residual_corners",
-                                "momentum_score", "corners_rate_per_min",
-                                "corners_total_so_far"]:
-                        if col in X_df.columns:
-                            parts.append(X_df[col].fillna(0).values.astype(float))
-                    return np.column_stack(parts)
+                    diff = pc - dl
+                    extra = np.column_stack([diff, pc, dl])
+                    base = X_df.fillna(0).values.astype(float)
+                    return np.column_stack([base, extra])
 
                 if len(np.unique(oa_tr)) == 2:
                     _xc = xgb.XGBClassifier(
