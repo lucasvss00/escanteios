@@ -1899,20 +1899,24 @@ try:
         print(f"    > 55%: {(p_over >= 0.55).sum():,}  > 60%: {(p_over >= 0.60).sum():,}  "
               f"> 65%: {(p_over >= 0.65).sum():,}")
 
+        p_under     = 1.0 - p_over
+        under_actual = 1 - over_actual
+
         print(f"\n  Linha por liga  (corners + remaining × league_rate | fallback 0.1/min):")
         print(f"    Linha média test : {dynamic_line.mean():.2f}  "
               f"(min={dynamic_line.min():.1f}  max={dynamic_line.max():.1f})")
         print(f"    Break-even @ {ODDS_OVER:.2f} : {BREAKEVEN:.1%}  |  Edge mín: +{MIN_EDGE:.0%}")
-        print(f"    Threshold (CAL)  : {best_thresh:.0%}  (ROI cal={best_roi_on_cal:+.1%})")
+        print(f"    Melhor lado (CAL): {_bet_side}  thresh={best_thresh:.0%}  "
+              f"ROI(cal)={best_roi_on_cal:+.1%}")
         print(f"\n    (A) BASELINE — Over SEMPRE:")
         print(f"        Apostas={n_total:,}  Acur={acc_all:.1%}  ROI={roi_all:+.1%}  Brier={brier_all:.4f}")
 
-        # ---- (B) Over filtrado — sweep de threshold no test ----
+        # ---- (B) Over — sweep de threshold no test ----
         print(f"\n    (B) Over — [{best_method}] — threshold sweep:")
         print(f"        {'Thresh':>7s}  {'Apostas':>7s}  {'Acur':>6s}  {'ROI(fix)':>9s}  "
               f"{'ROI(real)':>9s}  {'Brier':>7s}")
-        _thresh_set = sorted({round(float(best_thresh), 2)} | {0.50, 0.55, 0.60, 0.65, 0.70})
-        for thresh in _thresh_set:
+        _thresh_over_set = sorted({round(float(best_over_thresh), 2)} | {0.50, 0.55, 0.60, 0.65, 0.70})
+        for thresh in _thresh_over_set:
             mask_t = p_over >= thresh
             n_t    = mask_t.sum()
             if n_t > 0:
@@ -1923,28 +1927,40 @@ try:
                 brier_t     = float(np.mean((p_over[mask_t] - over_actual[mask_t]) ** 2))
             else:
                 acc_t = roi_fix = roi_real = brier_t = 0.0
-            marker = "  ←" if abs(thresh - best_thresh) < 0.005 else ""
+            marker = "  ←" if (_bet_side == "Over" and abs(thresh - best_thresh) < 0.005) else ""
             print(f"        {thresh:>6.0%}  {n_t:>7,}  {acc_t:>5.1%}  "
                   f"{roi_fix:>+8.1%}  {roi_real:>+8.1%}  {brier_t:>7.4f}{marker}")
 
-        # ---- (g) Under simétrico ----
-        _thresh_under = 1.0 - best_thresh
-        mask_under = (1.0 - p_over) >= _thresh_under
-        n_u = mask_under.sum()
-        if n_u > 0:
-            wins_u     = (1 - over_actual[mask_under]).sum()
-            acc_u      = wins_u / n_u
-            roi_u_fix  = (wins_u * (ODDS_UNDER - 1) - (n_u - wins_u)) / n_u
-            _, roi_u_real, _ = _profit_vec(over_actual, mask_under, odds_under_t, ODDS_UNDER, False)
-            print(f"\n    (C) Under — P(under)>={_thresh_under:.0%}:")
-            print(f"        Apostas={n_u:,}  Acur={acc_u:.1%}  "
-                  f"ROI(fix)={roi_u_fix:+.1%}  ROI(real)={roi_u_real:+.1%}")
-        else:
-            print(f"\n    (C) Under — sem apostas com P(under)>={_thresh_under:.0%}")
+        # ---- (C) Under — sweep de threshold no test ----
+        print(f"\n    (C) Under — [{best_method}] — threshold sweep:")
+        print(f"        {'Thresh':>7s}  {'Apostas':>7s}  {'Acur':>6s}  {'ROI(fix)':>9s}  "
+              f"{'ROI(real)':>9s}")
+        _thresh_under_set = sorted({round(float(best_under_thresh), 2)} | {0.50, 0.55, 0.60, 0.65, 0.70})
+        for thresh in _thresh_under_set:
+            mask_u = p_under >= thresh
+            n_u    = mask_u.sum()
+            if n_u > 0:
+                wins_u  = under_actual[mask_u].sum()
+                acc_u   = wins_u / n_u
+                roi_fix = (wins_u * (ODDS_UNDER - 1) - (n_u - wins_u)) / n_u
+                _, roi_real, _ = _profit_vec(over_actual, mask_u, odds_under_t, ODDS_UNDER, False)
+            else:
+                acc_u = roi_fix = roi_real = 0.0
+            marker = "  ←" if (_bet_side == "Under" and abs(thresh - best_thresh) < 0.005) else ""
+            print(f"        {thresh:>6.0%}  {n_u:>7,}  {acc_u:>5.1%}  "
+                  f"{roi_fix:>+8.1%}  {roi_real:>+8.1%}{marker}")
 
-        # ---- (i) Breakdown por contexto ----
-        mask_best = p_over >= best_thresh
-        print(f"\n    Breakdown — [{best_method}, thresh={best_thresh:.0%}]:")
+        # ---- (i) Breakdown por contexto (lado selecionado) ----
+        if _bet_side == "Over":
+            mask_best = p_over >= best_thresh
+            _act_arr  = over_actual
+            _odds_def = ODDS_OVER
+        else:
+            mask_best = p_under >= best_thresh
+            _act_arr  = under_actual
+            _odds_def = ODDS_UNDER
+
+        print(f"\n    Breakdown — [{_bet_side}, {best_method}, thresh={best_thresh:.0%}]:")
         print(f"        {'Contexto':<26s}  {'Total':>6s}  {'Apostas':>7s}  {'Acur':>6s}  {'ROI':>8s}")
         _ctx_rows = []
         for _col, _lmap in [
@@ -1957,8 +1973,8 @@ try:
                     _mb = mask_best & _mc
                     _nb = _mb.sum()
                     if _nb > 3:
-                        _w = over_actual[_mb].sum()
-                        _r = (_w * (ODDS_OVER - 1) - (_nb - _w)) / _nb
+                        _w = _act_arr[_mb].sum()
+                        _r = (_w * (_odds_def - 1) - (_nb - _w)) / _nb
                         _ctx_rows.append((_lbl, _mc.sum(), _nb, _w / _nb, _r))
         for _lo, _hi, _lbl in [(0, 8, "Linha:<=8"), (8, 10.5, "Linha:8-10.5"),
                                 (10.5, 13, "Linha:10.5-13"), (13, 99, "Linha:>=13")]:
@@ -1966,21 +1982,22 @@ try:
             _mb = mask_best & _ml
             _nb = _mb.sum()
             if _nb > 3:
-                _w = over_actual[_mb].sum()
-                _r = (_w * (ODDS_OVER - 1) - (_nb - _w)) / _nb
+                _w = _act_arr[_mb].sum()
+                _r = (_w * (_odds_def - 1) - (_nb - _w)) / _nb
                 _ctx_rows.append((_lbl, _ml.sum(), _nb, _w / _nb, _r))
         for _lbl, _ntot, _nb, _ac, _roi in _ctx_rows:
             print(f"        {_lbl:<26s}  {_ntot:>6,}  {_nb:>7,}  {_ac:>5.1%}  {_roi:>+7.1%}")
 
-        # Armazena métricas do threshold selecionado
-        mask_best_t = p_over >= best_thresh
-        n_best = mask_best_t.sum()
+        # Armazena métricas do lado selecionado
+        n_best = mask_best.sum()
         if n_best > 0:
-            wins_b       = over_actual[mask_best_t].sum()
+            wins_b       = _act_arr[mask_best].sum()
             accuracy_dyn = wins_b / n_best
-            profit_b     = wins_b * (ODDS_OVER - 1) - (n_best - wins_b)
+            profit_b     = wins_b * (_odds_def - 1) - (n_best - wins_b)
             roi_dyn      = profit_b / n_best
-            brier_dyn    = float(np.mean((p_over[mask_best_t] - over_actual[mask_best_t]) ** 2))
+            brier_dyn    = (float(np.mean((p_over[mask_best] - over_actual[mask_best]) ** 2))
+                           if _bet_side == "Over" else
+                           float(np.mean((p_under[mask_best] - under_actual[mask_best]) ** 2)))
         else:
             accuracy_dyn = acc_all
             roi_dyn      = roi_all
