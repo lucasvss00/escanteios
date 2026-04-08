@@ -2098,6 +2098,385 @@ try:
               f"{roi_str:>8s}  {info['dynamic_line_brier']:>7.4f}")
     print(f"{'═' * 90}")
 
+    # ==================================================================
+    # 7. WALK-FORWARD VALIDATION
+    #
+    # Divide os dados em N folds cronológicos e, para cada fold de teste,
+    # treina no passado, calibra no fold anterior e avalia no fold atual.
+    # Isso dá estimativas de ROI muito mais confiáveis do que o split único.
+    #
+    # Folds (N=5):
+    #   ti=2: train=fold0,       cal=fold1, test=fold2
+    #   ti=3: train=fold0+fold1, cal=fold2, test=fold3
+    #   ti=4: train=fold0-2,     cal=fold3, test=fold4
+    #
+    # Use --no-walkforward para pular esta seção.
+    # ==================================================================
+    _SKIP_WF = "--no-walkforward" in _sys.argv
+    N_WF_FOLDS = 5
+
+    if not _SKIP_WF:
+        print(f"\n{'═' * 80}")
+        print(f"  WALK-FORWARD VALIDATION  ({N_WF_FOLDS} folds, {N_WF_FOLDS - 2} janelas de teste)")
+        print(f"{'═' * 80}")
+
+        # Carrega hparams do cache (já gerado pelo treino acima)
+        if _HPARAMS_PATH.exists():
+            _wf_hparams = joblib.load(_HPARAMS_PATH)
+        else:
+            _wf_hparams = {}
+
+        wf_summary: dict[int, dict] = {}
+
+        for snap_min in SNAPSHOT_MINUTES:
+            print(f"\n  {'─' * 50}")
+            print(f"  ⚽ MINUTO {snap_min}  (walk-forward)")
+            print(f"  {'─' * 50}")
+
+            df_min = df_features[df_features["snap_minute"] == snap_min].copy()
+            if "kickoff_dt" in df_min.columns:
+                df_min = df_min.sort_values("kickoff_dt").reset_index(drop=True)
+            n_wf = len(df_min)
+            fold_size = n_wf // N_WF_FOLDS
+
+            feat_cols_wf = (BASE_FEATURE_COLS if snap_min == 15
+                            else BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS)
+            enc_cols_wf = [c for c in ENCODE_COLS if c in df_min.columns]
+
+            # Hparams do cache (do Optuna do treino principal)
+            _hp = _wf_hparams.get(snap_min, {}).get("params")
+            if _hp is None:
+                _hp = dict(
+                    n_estimators=500, max_depth=6, learning_rate=0.03,
+                    subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                    reg_alpha=0.1, reg_lambda=1.0,
+                    random_state=42, verbosity=0, early_stopping_rounds=30,
+                )
+
+            wf_total_bets = 0
+            wf_total_wins = 0
+            wf_total_profit = 0.0
+            wf_fold_rois: list[float] = []
+            wf_fold_maes: list[float] = []
+            wf_fold_details: list[dict] = []
+
+            for ti in range(2, N_WF_FOLDS):
+                # Expanding window: treino cresce a cada fold
+                cal_start = (ti - 1) * fold_size
+                cal_end = ti * fold_size
+                test_start = ti * fold_size
+                test_end = (ti + 1) * fold_size if ti < N_WF_FOLDS - 1 else n_wf
+
+                df_tr = df_min.iloc[:cal_start].copy()
+                df_ca = df_min.iloc[cal_start:cal_end].copy()
+                df_te = df_min.iloc[test_start:test_end].copy()
+
+                if len(df_tr) < 80:
+                    print(f"    Fold {ti}: treino insuficiente ({len(df_tr)}). Pulando.")
+                    continue
+
+                # Target encoding (fit no treino)
+                if enc_cols_wf:
+                    _te_wf = TargetEncoderSmoothed(
+                        cols=enc_cols_wf, target_col=TARGET, smoothing=10)
+                    _te_wf.fit(df_tr)
+                    df_tr = _te_wf.transform(df_tr)
+                    df_ca = _te_wf.transform(df_ca)
+                    df_te = _te_wf.transform(df_te)
+
+                # Feature prep (medianas do treino)
+                avail_wf, df_tr_c = prepare_features(df_tr, feat_cols_wf)
+                med_wf = {c: df_tr_c[c].median()
+                          for c in avail_wf
+                          if c.startswith(("hist_", "league_")) or c.endswith("_target_enc")}
+                _, df_ca_c = prepare_features(df_ca, feat_cols_wf,
+                                              medians=med_wf, available_override=avail_wf)
+                _, df_te_c = prepare_features(df_te, feat_cols_wf,
+                                              medians=med_wf, available_override=avail_wf)
+
+                if len(df_te_c) < 20 or len(df_ca_c) < 20:
+                    print(f"    Fold {ti}: cal/teste insuficiente. Pulando.")
+                    continue
+
+                Xtr, ytr = df_tr_c[avail_wf], df_tr_c[TARGET]
+                Xca, yca = df_ca_c[avail_wf], df_ca_c[TARGET]
+                Xte, yte = df_te_c[avail_wf], df_te_c[TARGET]
+
+                # --- Modelo principal ---
+                _m_wf = xgb.XGBRegressor(**_hp)
+                _m_wf.fit(Xtr, ytr, eval_set=[(Xca, yca)], verbose=False)
+
+                _raw_te = _m_wf.predict(Xte)
+                _raw_ca = _m_wf.predict(Xca)
+                _mae_raw = mean_absolute_error(yte, _raw_te)
+
+                # Calibração isotônica
+                _iso_wf = IsotonicRegression(y_min=0, y_max=35, out_of_bounds="clip")
+                _iso_wf.fit(_raw_ca, yca)
+                _cal_te = _iso_wf.predict(_raw_te)
+                _mae_cal = mean_absolute_error(yte, _cal_te)
+                _use_cal = _mae_cal < _mae_raw
+                _pred_te = _cal_te if _use_cal else _raw_te
+                _mae_best = min(_mae_raw, _mae_cal)
+                wf_fold_maes.append(_mae_best)
+
+                # Quantile (P10, P90) para sigma
+                _q10_wf = xgb.XGBRegressor(
+                    objective="reg:quantileerror", quantile_alpha=0.10,
+                    n_estimators=500, max_depth=6, learning_rate=0.03,
+                    subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                    reg_alpha=0.05, reg_lambda=0.5, random_state=42,
+                    verbosity=0, early_stopping_rounds=30)
+                _q90_wf = xgb.XGBRegressor(
+                    objective="reg:quantileerror", quantile_alpha=0.90,
+                    n_estimators=500, max_depth=6, learning_rate=0.03,
+                    subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                    reg_alpha=0.05, reg_lambda=0.5, random_state=42,
+                    verbosity=0, early_stopping_rounds=30)
+                _q10_wf.fit(Xtr, ytr, eval_set=[(Xca, yca)], verbose=False)
+                _q90_wf.fit(Xtr, ytr, eval_set=[(Xca, yca)], verbose=False)
+
+                # --- Linha dinâmica ---
+                _rem = 90 - snap_min
+
+                def _wf_dline(X_df, rem):
+                    csf = (X_df["corners_total_so_far"].values
+                           if "corners_total_so_far" in X_df.columns
+                           else np.zeros(len(X_df)))
+                    la = (X_df["league_avg_corners"].values
+                          if "league_avg_corners" in X_df.columns
+                          else np.full(len(X_df), np.nan))
+                    lines = []
+                    for c, l in zip(csf, la):
+                        try:
+                            r = (float(l) / 90.0
+                                 if (l is not None and not np.isnan(float(l))
+                                     and float(l) > 0) else 0.1)
+                        except (TypeError, ValueError):
+                            r = 0.1
+                        lines.append(np.round((c + rem * r) * 2) / 2)
+                    return np.array(lines, dtype=float)
+
+                dl_te = _wf_dline(Xte, _rem)
+                dl_ca = _wf_dline(Xca, _rem)
+                dl_tr = _wf_dline(Xtr, _rem)
+
+                oa_te = (yte.values > dl_te).astype(int)
+                oa_ca = (yca.values > dl_ca).astype(int)
+                oa_tr = (ytr.values > dl_tr).astype(int)
+
+                # Predictions clipped
+                _pc_te = np.clip(_pred_te, 0.1, 60.0)
+                _cal_ca = _iso_wf.predict(_raw_ca) if _use_cal else _raw_ca
+                _pc_ca = np.clip(_cal_ca, 0.1, 60.0)
+                _raw_tr = _m_wf.predict(Xtr)
+                _pc_tr = np.clip(
+                    _iso_wf.predict(_raw_tr) if _use_cal else _raw_tr, 0.1, 60.0)
+
+                fl_te = np.floor(dl_te).astype(int)
+                fl_ca = np.floor(dl_ca).astype(int)
+
+                # Sigma heteroscedástico
+                _p10_te = _q10_wf.predict(Xte)
+                _p90_te = _q90_wf.predict(Xte)
+                _p10_ca = _q10_wf.predict(Xca)
+                _p90_ca = _q90_wf.predict(Xca)
+                sig_te = np.maximum(_p90_te - _p10_te, 1.5) / (2 * 1.28)
+                sig_ca = np.maximum(_p90_ca - _p10_ca, 1.5) / (2 * 1.28)
+
+                # --- 5 métodos probabilísticos ---
+                # (1) Normal heteroscedástico
+                pn_te = 1.0 - sp_norm.cdf(dl_te, loc=_pc_te, scale=sig_te)
+                pn_ca = 1.0 - sp_norm.cdf(dl_ca, loc=_pc_ca, scale=sig_ca)
+
+                # (2) Poisson
+                pp_te = np.array([1.0 - sp_poisson.cdf(f, mu=max(m, 0.01))
+                                  for f, m in zip(fl_te, _pc_te)])
+                pp_ca = np.array([1.0 - sp_poisson.cdf(f, mu=max(m, 0.01))
+                                  for f, m in zip(fl_ca, _pc_ca)])
+
+                # (3) NegBinom
+                _rv = float(np.mean((yca.values - _pc_ca) ** 2))
+                _mm = float(np.mean(_pc_ca))
+                _nbr = float(np.clip(_mm ** 2 / max(_rv - _mm, 0.5), 0.5, 100.0))
+                pnb_te = np.array([
+                    1.0 - sp_nbinom.cdf(f, n=_nbr, p=_nbr / (_nbr + max(m, 0.01)))
+                    for f, m in zip(fl_te, _pc_te)])
+                pnb_ca = np.array([
+                    1.0 - sp_nbinom.cdf(f, n=_nbr, p=_nbr / (_nbr + max(m, 0.01)))
+                    for f, m in zip(fl_ca, _pc_ca)])
+
+                # (4) Logística multi-feature (fit no TRAIN)
+                def _wf_logfeat(pc, dl, X_df, min_):
+                    d = pc - dl
+                    parts = [d, d / np.maximum(dl, 1.0), pc, dl,
+                             np.full(len(pc), float(min_))]
+                    for col in ["game_regime", "residual_corners",
+                                "momentum_score", "corners_rate_per_min",
+                                "is_high_pace"]:
+                        if col in X_df.columns:
+                            parts.append(X_df[col].fillna(0).values.astype(float))
+                    return np.column_stack(parts)
+
+                if len(np.unique(oa_tr)) == 2:
+                    _lc = LogisticRegression(C=1.0, max_iter=1000, solver="lbfgs")
+                    _lc.fit(_wf_logfeat(_pc_tr, dl_tr, Xtr, snap_min), oa_tr)
+                    pl_te = _lc.predict_proba(
+                        _wf_logfeat(_pc_te, dl_te, Xte, snap_min))[:, 1]
+                    pl_ca = _lc.predict_proba(
+                        _wf_logfeat(_pc_ca, dl_ca, Xca, snap_min))[:, 1]
+                else:
+                    pl_te, pl_ca = pn_te.copy(), pn_ca.copy()
+
+                # (5) XGBoost classificador (fit no TRAIN)
+                def _wf_clffeat(pc, dl, X_df):
+                    parts = [pc - dl, pc, dl]
+                    for col in ["game_regime", "residual_corners",
+                                "momentum_score", "corners_rate_per_min",
+                                "corners_total_so_far"]:
+                        if col in X_df.columns:
+                            parts.append(X_df[col].fillna(0).values.astype(float))
+                    return np.column_stack(parts)
+
+                if len(np.unique(oa_tr)) == 2:
+                    _xc = xgb.XGBClassifier(
+                        n_estimators=300, max_depth=4, learning_rate=0.05,
+                        subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                        eval_metric="logloss", random_state=42, verbosity=0,
+                        early_stopping_rounds=20)
+                    _xc.fit(_wf_clffeat(_pc_tr, dl_tr, Xtr), oa_tr,
+                            eval_set=[(_wf_clffeat(_pc_ca, dl_ca, Xca), oa_ca)],
+                            verbose=False)
+                    pc_te = _xc.predict_proba(
+                        _wf_clffeat(_pc_te, dl_te, Xte))[:, 1]
+                    pc_ca = _xc.predict_proba(
+                        _wf_clffeat(_pc_ca, dl_ca, Xca))[:, 1]
+                else:
+                    pc_te, pc_ca = pn_te.copy(), pn_ca.copy()
+
+                # Seleção de método (Brier no cal)
+                _meths = {
+                    "Normal": (pn_te, pn_ca), "Poisson": (pp_te, pp_ca),
+                    "NegBinom": (pnb_te, pnb_ca), "Logistic": (pl_te, pl_ca),
+                    "XGBClf": (pc_te, pc_ca),
+                }
+                _briers = {nm: float(np.mean((pcal - oa_ca) ** 2))
+                           for nm, (_, pcal) in _meths.items()}
+                _bm = min(_briers, key=_briers.get)
+                po_te = _meths[_bm][0]
+                po_ca = _meths[_bm][1]
+
+                # --- Threshold (Over e Under no cal) ---
+                _BE = 1.0 / ODDS_OVER
+                _best_ot, _best_or = _BE + MIN_EDGE, -999.0
+                _best_ut, _best_ur = _BE + MIN_EDGE, -999.0
+                _pu_ca = 1.0 - po_ca
+                _ua_ca = 1 - oa_ca
+
+                for _thr in np.arange(_BE + MIN_EDGE, _THRESH_MAX + 0.001, 0.01):
+                    # Over
+                    _mo = po_ca >= _thr
+                    if _mo.sum() >= _MIN_CAL_BET:
+                        _wo = oa_ca[_mo].sum()
+                        _ro = (_wo * (ODDS_OVER - 1) - (_mo.sum() - _wo)) / _mo.sum()
+                        if _ro > _best_or:
+                            _best_or, _best_ot = _ro, _thr
+                    # Under
+                    _mu = _pu_ca >= _thr
+                    if _mu.sum() >= _MIN_CAL_BET:
+                        _wu = _ua_ca[_mu].sum()
+                        _ru = (_wu * (ODDS_UNDER - 1) - (_mu.sum() - _wu)) / _mu.sum()
+                        if _ru > _best_ur:
+                            _best_ur, _best_ut = _ru, _thr
+
+                if _best_or >= _best_ur and _best_or > 0:
+                    _side, _thresh = "Over", _best_ot
+                elif _best_ur > 0:
+                    _side, _thresh = "Under", _best_ut
+                else:
+                    _side, _thresh = "Over", _BE + MIN_EDGE
+
+                # --- Aplica ao teste ---
+                _pu_te = 1.0 - po_te
+                _ua_te = 1 - oa_te
+                if _side == "Over":
+                    _mask = po_te >= _thresh
+                    _act = oa_te
+                else:
+                    _mask = _pu_te >= _thresh
+                    _act = _ua_te
+
+                _nb = int(_mask.sum())
+                if _nb > 0:
+                    _w = int(_act[_mask].sum())
+                    _pf = _w * (ODDS_OVER - 1) - (_nb - _w)
+                    _roi = _pf / _nb
+                    wf_total_bets += _nb
+                    wf_total_wins += _w
+                    wf_total_profit += _pf
+                    wf_fold_rois.append(_roi)
+                    print(f"    Fold {ti}: tr={len(Xtr):,} ca={len(Xca):,} te={len(Xte):,}  "
+                          f"MAE={_mae_best:.3f}  {_side} {_bm} {_thresh:.0%}  "
+                          f"apostas={_nb}  acur={_w/_nb:.1%}  ROI={_roi:+.1%}")
+                else:
+                    wf_fold_rois.append(0.0)
+                    print(f"    Fold {ti}: tr={len(Xtr):,} ca={len(Xca):,} te={len(Xte):,}  "
+                          f"MAE={_mae_best:.3f}  sem apostas qualificadas")
+
+                wf_fold_details.append({
+                    "fold": ti, "side": _side, "method": _bm,
+                    "thresh": _thresh, "n_bets": _nb,
+                    "mae": _mae_best,
+                })
+
+            # --- Agregado do minuto ---
+            agg_roi = wf_total_profit / wf_total_bets if wf_total_bets > 0 else 0.0
+            agg_acc = wf_total_wins / wf_total_bets if wf_total_bets > 0 else 0.0
+            agg_mae = float(np.mean(wf_fold_maes)) if wf_fold_maes else 0.0
+            _nonzero_rois = [r for r in wf_fold_rois if r != 0.0]
+            roi_std = float(np.std(_nonzero_rois)) if len(_nonzero_rois) >= 2 else 0.0
+
+            wf_summary[snap_min] = {
+                "total_bets": wf_total_bets,
+                "accuracy": round(agg_acc, 4),
+                "roi": round(agg_roi, 4),
+                "roi_std": round(roi_std, 4),
+                "fold_rois": [round(r, 4) for r in wf_fold_rois],
+                "mae_avg": round(agg_mae, 4),
+                "n_folds": len(wf_fold_maes),
+            }
+
+            print(f"\n    Agregado min {snap_min}: apostas={wf_total_bets:,}  "
+                  f"acur={agg_acc:.1%}  ROI={agg_roi:+.1%}  "
+                  f"MAE={agg_mae:.3f}  ROI std={roi_std:.1%}")
+
+        # --- Tabela resumo Walk-Forward ---
+        print(f"\n{'═' * 90}")
+        print(f"  WALK-FORWARD VALIDATION — RESUMO AGREGADO ({N_WF_FOLDS} folds, "
+              f"{N_WF_FOLDS - 2} janelas)")
+        print(f"{'═' * 90}")
+        print(f"  {'Min':>4s}  {'Apostas':>8s}  {'Acurácia':>9s}  {'ROI':>8s}  "
+              f"{'ROI std':>8s}  {'MAE':>6s}  {'Folds':>5s}  {'ROI por fold'}")
+        print(f"  {'─'*4}  {'─'*8}  {'─'*9}  {'─'*8}  {'─'*8}  {'─'*6}  {'─'*5}  {'─'*30}")
+        for m in SNAPSHOT_MINUTES:
+            if m not in wf_summary:
+                continue
+            info = wf_summary[m]
+            fr_str = ", ".join(f"{r:+.1%}" for r in info["fold_rois"])
+            print(f"  {m:>4d}  {info['total_bets']:>8,}  {info['accuracy']:>8.1%}  "
+                  f"{info['roi']:>+7.1%}  {info['roi_std']:>7.1%}  "
+                  f"{info['mae_avg']:>6.3f}  {info['n_folds']:>5d}  {fr_str}")
+        print(f"{'═' * 90}")
+        print(f"\n  Interpretação:")
+        print(f"    - ROI consistente entre folds (std < 10%) → sinal confiável")
+        print(f"    - ROI com alta variância entre folds → possível overfitting no threshold")
+        print(f"    - ROI walk-forward < ROI single-split → o split único estava otimista")
+        print(f"  (use --no-walkforward para pular esta seção)")
+
+        # Salva no metadata
+        all_metadata["walkforward"] = wf_summary
+        joblib.dump(all_metadata, DATA_DIR / "modelo_corners_meta.joblib")
+
 except ImportError as e:
     print(f"  Pacote não instalado ({e}). Instale: pip install xgboost scikit-learn joblib")
 
