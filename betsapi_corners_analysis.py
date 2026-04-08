@@ -1190,6 +1190,7 @@ try:
         # Placar e contexto
         "score_home", "score_away",
         "score_diff", "total_red_cards", "red_card_diff",
+        "red_cards_home", "red_cards_away",
         "is_draw",
         # Placar do intervalo (disponível para snap > 45)
         "ht_score_home", "ht_score_away",
