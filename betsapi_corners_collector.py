@@ -159,6 +159,13 @@ class BetsAPIClient:
     def _get(self, endpoint: str, params: dict = None) -> dict:
         self._check_rate_limit()   # lança RateLimitReached se necessário
 
+        # Se outro thread disparou cooldown global (429), espera antes de prosseguir
+        now = time.monotonic()
+        if self._cooldown_until > now:
+            wait_cd = self._cooldown_until - now
+            log.debug("Cooldown global ativo, aguardando %.1fs antes de %s", wait_cd, endpoint)
+            time.sleep(wait_cd)
+
         url = f"{BASE_URL}{endpoint}"
         params = params or {}
         params.setdefault("token", self.token)
@@ -175,8 +182,10 @@ class BetsAPIClient:
             except requests.RequestException as exc:
                 is_429 = isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None and exc.response.status_code == 429
                 if is_429:
-                    wait = RETRY_DELAY * (2 ** attempt)  # 10, 20, 40s
-                    log.warning("429 Rate Limited (%s), aguardando %ds antes de retry %d/%d...",
+                    wait = RETRY_DELAY * (2 ** attempt) + random.uniform(0, 3)  # backoff + jitter
+                    # Sinaliza cooldown global para todos os threads
+                    self._cooldown_until = time.monotonic() + wait
+                    log.warning("429 Rate Limited (%s), aguardando %.0fs antes de retry %d/%d...",
                                 endpoint, wait, attempt, MAX_RETRIES)
                 else:
                     wait = RETRY_DELAY
