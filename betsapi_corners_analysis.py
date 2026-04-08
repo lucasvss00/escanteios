@@ -2048,6 +2048,7 @@ try:
             "dynamic_line_n_bets":   int(n_best),
             "dynamic_line_method":   best_method,
             "dynamic_line_thresh":   best_thresh,
+            "dynamic_line_side":     _bet_side,
         }
 
     # --- Salva metadata ---
