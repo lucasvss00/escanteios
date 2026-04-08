@@ -99,6 +99,7 @@ class BetsAPIClient:
         self.request_count = 0
         self.window_start  = datetime.now(UTC)
         self._lock         = threading.Lock()  # protege request_count e window_start
+        self._cooldown_until: float = 0.0      # timestamp até onde todos devem pausar (429 global)
 
     @property
     def requests_remaining(self) -> int:
