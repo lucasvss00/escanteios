@@ -1736,13 +1736,14 @@ try:
         # FIT no TRAIN (não no cal!) para evitar leakage na seleção de método/threshold
         def _logfeat(pred_c, dline, X_df, min_):
             diff = pred_c - dline
-            parts = [diff, diff / np.maximum(dline, 1.0), pred_c, dline,
-                     np.full(len(pred_c), float(min_))]
-            for col in ["game_regime", "residual_corners", "momentum_score",
-                        "corners_rate_per_min", "is_high_pace"]:
-                if col in X_df.columns:
-                    parts.append(X_df[col].fillna(0).values.astype(float))
-            return np.column_stack(parts)
+            extra = np.column_stack([
+                diff,
+                diff / np.maximum(dline, 1.0),
+                pred_c,
+                dline,
+            ])
+            base = X_df.fillna(0).values.astype(float)
+            return np.column_stack([base, extra])
 
         X_ltrain = _logfeat(preds_train_c, dynamic_line_train, X_train, snap_min)
         X_lcal   = _logfeat(preds_cal_c,   dynamic_line_cal,   X_cal,   snap_min)
