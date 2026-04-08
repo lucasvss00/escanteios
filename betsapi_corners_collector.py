@@ -171,9 +171,16 @@ class BetsAPIClient:
                 log.warning("API retornou success=0 em %s: %s", endpoint, data.get("error", ""))
                 return data
             except requests.RequestException as exc:
-                log.warning("Tentativa %d/%d falhou (%s): %s", attempt, MAX_RETRIES, endpoint, exc)
+                is_429 = isinstance(exc, requests.exceptions.HTTPError) and exc.response is not None and exc.response.status_code == 429
+                if is_429:
+                    wait = RETRY_DELAY * (2 ** attempt)  # 10, 20, 40s
+                    log.warning("429 Rate Limited (%s), aguardando %ds antes de retry %d/%d...",
+                                endpoint, wait, attempt, MAX_RETRIES)
+                else:
+                    wait = RETRY_DELAY
+                    log.warning("Tentativa %d/%d falhou (%s): %s", attempt, MAX_RETRIES, endpoint, exc)
                 if attempt < MAX_RETRIES:
-                    time.sleep(RETRY_DELAY)
+                    time.sleep(wait)
         return {}
 
     # ------------------------------------------------------------------
