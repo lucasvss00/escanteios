@@ -1759,12 +1759,10 @@ try:
 
         # ---- (d) XGBoost classificador direto ----
         def _clffeat(pred_c, dline, X_df):
-            parts = [pred_c - dline, pred_c, dline]
-            for col in ["game_regime", "residual_corners", "momentum_score",
-                        "corners_rate_per_min", "corners_total_so_far"]:
-                if col in X_df.columns:
-                    parts.append(X_df[col].fillna(0).values.astype(float))
-            return np.column_stack(parts)
+            diff = pred_c - dline
+            extra = np.column_stack([diff, pred_c, dline])
+            base = X_df.fillna(0).values.astype(float)
+            return np.column_stack([base, extra])
 
         X_clf_tr = _clffeat(preds_train_c, dynamic_line_train, X_train)
         X_clf_ca = _clffeat(preds_cal_c,   dynamic_line_cal,   X_cal)
