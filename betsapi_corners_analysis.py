@@ -1732,6 +1732,7 @@ try:
                                for fl, m in zip(fl_cal, preds_cal_c)])
 
         # ---- (c) Logística multi-feature ----
+        # FIT no TRAIN (não no cal!) para evitar leakage na seleção de método/threshold
         def _logfeat(pred_c, dline, X_df, min_):
             diff = pred_c - dline
             parts = [diff, diff / np.maximum(dline, 1.0), pred_c, dline,
@@ -1742,11 +1743,12 @@ try:
                     parts.append(X_df[col].fillna(0).values.astype(float))
             return np.column_stack(parts)
 
-        X_lcal  = _logfeat(preds_cal_c,  dynamic_line_cal, X_cal,  snap_min)
-        X_ltest = _logfeat(preds_test_c, dynamic_line,     X_test, snap_min)
-        if len(np.unique(over_actual_cal)) == 2:
+        X_ltrain = _logfeat(preds_train_c, dynamic_line_train, X_train, snap_min)
+        X_lcal   = _logfeat(preds_cal_c,   dynamic_line_cal,   X_cal,   snap_min)
+        X_ltest  = _logfeat(preds_test_c,  dynamic_line,       X_test,  snap_min)
+        if len(np.unique(over_actual_train)) == 2:
             _log_clf = LogisticRegression(C=1.0, max_iter=1000, solver="lbfgs")
-            _log_clf.fit(X_lcal, over_actual_cal)
+            _log_clf.fit(X_ltrain, over_actual_train)
             p_logistic_test = _log_clf.predict_proba(X_ltest)[:, 1]
             p_logistic_cal  = _log_clf.predict_proba(X_lcal)[:, 1]
         else:
