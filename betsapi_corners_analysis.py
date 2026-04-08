@@ -1806,21 +1806,52 @@ try:
             print(f"    (NegBinom r={nb_r:.2f})")
 
         # ---- (e) Threshold selecionado no CAL set (sem leakage) ----
-        # Threshold max = 0.68 para garantir volume mínimo de apostas
-        # Mínimo de 30 apostas no cal set para estimar ROI confiável
+        # Over e Under avaliados separadamente; o melhor vence.
         _THRESH_MAX  = 0.68
-        _MIN_CAL_BET = max(30, int(len(y_cal) * 0.05))  # pelo menos 5% do cal set
-        best_thresh     = BREAKEVEN + MIN_EDGE
-        best_roi_on_cal = -999.0
+        _MIN_CAL_BET = 30
+
+        # -- Over: sweep threshold no cal --
+        best_over_thresh = BREAKEVEN + MIN_EDGE
+        best_over_roi    = -999.0
         for _thr in np.arange(BREAKEVEN + MIN_EDGE, _THRESH_MAX + 0.001, 0.01):
             _mc = p_over_cal >= _thr
             if _mc.sum() < _MIN_CAL_BET:
                 continue
             _wc = over_actual_cal[_mc].sum()
             _rc = (_wc * (ODDS_OVER - 1) - (_mc.sum() - _wc)) / _mc.sum()
-            if _rc > best_roi_on_cal:
-                best_roi_on_cal = _rc
-                best_thresh     = _thr
+            if _rc > best_over_roi:
+                best_over_roi    = _rc
+                best_over_thresh = _thr
+
+        # -- Under: sweep threshold no cal --
+        p_under_cal = 1.0 - p_over_cal
+        under_actual_cal = 1 - over_actual_cal
+        best_under_thresh = BREAKEVEN + MIN_EDGE
+        best_under_roi    = -999.0
+        for _thr in np.arange(BREAKEVEN + MIN_EDGE, _THRESH_MAX + 0.001, 0.01):
+            _mc = p_under_cal >= _thr
+            if _mc.sum() < _MIN_CAL_BET:
+                continue
+            _wc = under_actual_cal[_mc].sum()
+            _rc = (_wc * (ODDS_UNDER - 1) - (_mc.sum() - _wc)) / _mc.sum()
+            if _rc > best_under_roi:
+                best_under_roi    = _rc
+                best_under_thresh = _thr
+
+        # Decide a melhor direção (Over vs Under) pelo ROI do cal
+        if best_over_roi >= best_under_roi and best_over_roi > 0:
+            _bet_side    = "Over"
+            best_thresh  = best_over_thresh
+            best_roi_on_cal = best_over_roi
+        elif best_under_roi > 0:
+            _bet_side    = "Under"
+            best_thresh  = best_under_thresh
+            best_roi_on_cal = best_under_roi
+        else:
+            # Nenhum lado rentável: usa Over com threshold conservador
+            _bet_side    = "Over"
+            best_thresh  = BREAKEVEN + MIN_EDGE
+            best_roi_on_cal = best_over_roi
 
         # ---- (h) Odds reais por jogo ----
         odds_over_t  = X_test["corners_over_odds"].values  if "corners_over_odds"  in X_test.columns else None
