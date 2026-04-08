@@ -65,9 +65,9 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 BASE_URL = "https://api.b365api.com"
 SPORT_ID = 1          # Futebol
-MAX_RETRIES = 3
-RETRY_DELAY = 5       # segundos entre tentativas
-REQUEST_DELAY = 0.35  # delay entre requests — 3600 req/hora ≈ 3 req/s (conservador)
+MAX_RETRIES = 5
+RETRY_DELAY = 5       # segundos entre tentativas (base; 429 usa backoff exponencial)
+REQUEST_DELAY = 0.5   # delay entre requests — mais conservador para evitar 429
 
 
 # ---------------------------------------------------------------------------
