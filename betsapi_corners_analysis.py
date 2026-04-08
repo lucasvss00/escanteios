@@ -2308,14 +2308,14 @@ try:
                 # (4) Logística multi-feature (fit no TRAIN)
                 def _wf_logfeat(pc, dl, X_df, min_):
                     d = pc - dl
-                    parts = [d, d / np.maximum(dl, 1.0), pc, dl,
-                             np.full(len(pc), float(min_))]
-                    for col in ["game_regime", "residual_corners",
-                                "momentum_score", "corners_rate_per_min",
-                                "is_high_pace"]:
-                        if col in X_df.columns:
-                            parts.append(X_df[col].fillna(0).values.astype(float))
-                    return np.column_stack(parts)
+                    extra = np.column_stack([
+                        d,
+                        d / np.maximum(dl, 1.0),
+                        pc,
+                        dl,
+                    ])
+                    base = X_df.fillna(0).values.astype(float)
+                    return np.column_stack([base, extra])
 
                 if len(np.unique(oa_tr)) == 2:
                     _lc = LogisticRegression(C=1.0, max_iter=1000, solver="lbfgs")
