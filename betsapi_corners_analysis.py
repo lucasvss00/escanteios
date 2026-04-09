@@ -2473,6 +2473,10 @@ try:
                 oa_ca = (yca.values > dl_ca).astype(int)
                 oa_tr = (ytr.values > dl_tr).astype(int)
 
+                # Sample weights walk-forward
+                _wf_dev = np.abs(ytr.values - dl_tr)
+                sw_tr = 1.0 + (_wf_dev / max(_wf_dev.max(), 1.0)) * 2.0
+
                 # Predictions clipped
                 _pc_te = np.clip(_pred_te, 0.1, 60.0)
                 _cal_ca = _iso_wf.predict(_raw_ca) if _use_cal else _raw_ca
