@@ -834,6 +834,26 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                                    1 if _regime_score < 1.8 else 2)
 
             # ----------------------------------------------------------------
+            # Interações regime × features (aprende padrões condicionais)
+            # ----------------------------------------------------------------
+            _regime = feat["game_regime"]
+            feat["regime_x_corners_rate"] = round(
+                _regime * feat["corners_rate_per_min"], 4)
+            feat["regime_x_pressure_home"] = round(
+                _regime * feat.get("pressure_index_home", 0), 4)
+            feat["regime_x_dangerous_rate"] = round(
+                _regime * feat["dangerous_attacks_rate"], 4)
+
+            # Anomalia: regime vs corners reais
+            _exp_at_min_r = (
+                (_league_avg_early * snap_min / 90)
+                if _league_avg_early else c_total)
+            feat["is_high_regime_low_corners"] = int(
+                _regime == 2 and c_total < _exp_at_min_r * 0.5)
+            feat["is_low_regime_high_corners"] = int(
+                _regime == 0 and c_total > _exp_at_min_r * 1.5)
+
+            # ----------------------------------------------------------------
             # Dominância ofensiva e assimetria
             # ----------------------------------------------------------------
             feat["dangerous_dominance"] = _da_h - _da_a   # + = home domina
