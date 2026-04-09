@@ -457,6 +457,74 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                 feat["corners_vs_expected"] = None
                 feat["pace_ratio"] = None
 
+            # ----------------------------------------------------------------
+            # Sinal precoce: features que carregam informação mesmo com
+            # poucos minutos de jogo (crucial para minuto 15)
+            # ----------------------------------------------------------------
+
+            # Tendência combinada dos times (simétrica)
+            _hist_combo_avg = None
+            if home_avg_for is not None and away_avg_for is not None:
+                _hist_combo_avg = (float(home_avg_for) + float(away_avg_for)) / 2
+            feat["hist_team_combo_avg"] = (
+                round(_hist_combo_avg, 4) if _hist_combo_avg is not None else None)
+
+            # Par de times vs média da liga
+            _league_avg_early = league_avg_map.get(str(event_id)) if league_avg_map else None
+            if _hist_combo_avg is not None and _league_avg_early is not None:
+                feat["hist_vs_league"] = round(
+                    _hist_combo_avg - _league_avg_early / 2, 4)
+            else:
+                feat["hist_vs_league"] = None
+
+            # Fraqueza defensiva combinada
+            _hist_def_strength = None
+            if home_avg_against is not None and away_avg_against is not None:
+                _hist_def_strength = (
+                    float(home_avg_against) + float(away_avg_against)) / 2
+            feat["hist_defensive_strength"] = (
+                round(_hist_def_strength, 4)
+                if _hist_def_strength is not None else None)
+
+            # Flag: nenhum escanteio ainda
+            feat["no_corner_yet"] = int(c_total == 0)
+
+            # Taxa amplificada para início de jogo
+            feat["early_corner_surge"] = round(
+                c_total / max(snap_min / 15, 1), 4)
+
+            # Velocidade do primeiro escanteio
+            _first_corner_min = 0
+            if c_total > 0:
+                _ch = until["corners_home"].fillna(0)
+                _ca_col = until["corners_away"].fillna(0)
+                _ct_series = _ch + _ca_col
+                _first_mask = _ct_series > 0
+                if _first_mask.any():
+                    _first_corner_min = int(
+                        until.loc[_first_mask.idxmax(), "minute"])
+            feat["first_corner_speed"] = (
+                round(1.0 / max(_first_corner_min, 1), 4)
+                if _first_corner_min > 0 else 0)
+
+            # Divergência ritmo real vs expectativa histórica
+            if match_exp and match_exp > 0:
+                _exp_rate_pm = match_exp / 90
+                _actual_rate = c_total / max(snap_min, 1)
+                feat["hist_actual_rate_ratio"] = round(
+                    _actual_rate / max(_exp_rate_pm, 0.01), 4)
+            else:
+                feat["hist_actual_rate_ratio"] = None
+
+            # Ataques perigosos combinados (qualidade de ataque)
+            _hist_da_h = hist.get("hist_home_dangerous_attacks_avg")
+            _hist_da_a = hist.get("hist_away_dangerous_attacks_avg")
+            if _hist_da_h is not None and _hist_da_a is not None:
+                feat["hist_combined_dangerous"] = round(
+                    (float(_hist_da_h) + float(_hist_da_a)) / 2, 4)
+            else:
+                feat["hist_combined_dangerous"] = None
+
             # Liga: desvio padrão e z-score
             _league_avg = league_avg_map.get(str(event_id)) if league_avg_map else None
             _league_std = league_std_map.get(str(event_id)) if league_std_map else None
