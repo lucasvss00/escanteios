@@ -1458,8 +1458,15 @@ try:
         "pressure_ratio", "field_tilt_proxy",
         # Aceleração e momentum
         "acceleration_corners", "momentum_score",
-        # Game regime
+        # Game regime + interações
         "game_regime",
+        "regime_x_corners_rate", "regime_x_pressure_home",
+        "regime_x_dangerous_rate",
+        "is_high_regime_low_corners", "is_low_regime_high_corners",
+        # Sinal precoce (crucial para minuto 15)
+        "hist_team_combo_avg", "hist_vs_league", "hist_defensive_strength",
+        "no_corner_yet", "early_corner_surge", "first_corner_speed",
+        "hist_actual_rate_ratio", "hist_combined_dangerous",
         # Dominância ofensiva
         "dangerous_dominance", "corner_dominance", "one_sided_game",
         # Esperado vs real (resíduo)
