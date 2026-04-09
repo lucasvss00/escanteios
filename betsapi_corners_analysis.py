@@ -1513,6 +1513,9 @@ try:
         for c in fill_zero:
             df_out[c] = df_out[c].fillna(0)
 
+        # Substitui inf/-inf por NaN e depois preenche com 0
+        df_out[available] = df_out[available].replace([np.inf, -np.inf], np.nan).fillna(0)
+
         return available, df_out
 
     # --- Armazenamento de resultados e artefatos ---
