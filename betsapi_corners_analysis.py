@@ -2535,7 +2535,8 @@ try:
                         StandardScaler(),
                         LogisticRegression(C=1.0, max_iter=3000, solver="lbfgs")
                     )
-                    _lc.fit(_wf_logfeat(_pc_tr, dl_tr, Xtr, snap_min), oa_tr)
+                    _lc.fit(_wf_logfeat(_pc_tr, dl_tr, Xtr, snap_min), oa_tr,
+                            logisticregression__sample_weight=sw_tr)
                     pl_te = _lc.predict_proba(
                         _wf_logfeat(_pc_te, dl_te, Xte, snap_min))[:, 1]
                     pl_ca = _lc.predict_proba(
