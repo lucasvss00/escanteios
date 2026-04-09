@@ -1898,6 +1898,10 @@ try:
         over_actual_cal   = (y_cal.values   > dynamic_line_cal).astype(int)
         over_actual_train = (y_train.values > dynamic_line_train).astype(int)
 
+        # Sample weights: jogos com resultados extremos recebem mais peso [1, 3]
+        _corner_dev = np.abs(y_train.values - dynamic_line_train)
+        sample_weights_train = 1.0 + (_corner_dev / max(_corner_dev.max(), 1.0)) * 2.0
+
         preds_cal_best  = calibrator.predict(preds_cal_raw) if use_calibration else preds_cal_raw
         preds_cal_c     = np.clip(preds_cal_best, 0.1, 60.0)
         preds_test_c    = np.clip(preds_best,     0.1, 60.0)
