@@ -2558,6 +2558,7 @@ try:
                         eval_metric="logloss", random_state=42, verbosity=0,
                         early_stopping_rounds=30)
                     _xc.fit(_wf_clffeat(_pc_tr, dl_tr, Xtr), oa_tr,
+                            sample_weight=sw_tr,
                             eval_set=[(_wf_clffeat(_pc_ca, dl_ca, Xca), oa_ca)],
                             verbose=False)
                     pc_te = _xc.predict_proba(
