@@ -870,6 +870,93 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
             else:
                 feat["pace_shift"] = 0
 
+            # ----------------------------------------------------------------
+            # Features adicionais de pressão / momentum / burst / expectativa
+            # ----------------------------------------------------------------
+
+            # Pressure index 5: qualidade da pressão nos últimos 5 min
+            _att_last5_total = feat["attacks_last_5min"]
+            _da_last5_total  = feat["dangerous_attacks_last_5min"]
+            feat["pressure_index_5"] = round(
+                _da_last5_total / (_att_last5_total + 1), 4)
+
+            # Aceleração de ataques e ataques perigosos (last 5 vs prev 5)
+            _att_last10_total = feat["attacks_last_10min"]
+            _da_last10_total  = feat["dangerous_attacks_last_10min"]
+            _att_prev5 = _att_last10_total - _att_last5_total
+            _da_prev5  = _da_last10_total - _da_last5_total
+            feat["acceleration_attacks"]    = round((_att_last5_total - _att_prev5) / 5, 4)
+            feat["acceleration_dangerous"]  = round((_da_last5_total - _da_prev5) / 5, 4)
+
+            # Corners por minuto recente (últimos 5 min)
+            feat["corners_per_minute_recent"] = round(feat["corners_last_5min"] / 5, 4)
+
+            # Time decay pressure: pressão recente decaindo com tempo desde último corner
+            _tslc2 = feat.get("time_since_last_corner") or 0
+            feat["time_decay_pressure"] = round(
+                feat["pressure_index_5"] * np.exp(-_tslc2 / 10), 4)
+
+            # Winning team slowdown: ataques do time vencendo (ritmo mais lento?)
+            if score_h > score_a:
+                feat["winning_team_slowdown"] = round(
+                    (last.get("attacks_home") or 0) / max(snap_min, 1), 4)
+            elif score_a > score_h:
+                feat["winning_team_slowdown"] = round(
+                    (last.get("attacks_away") or 0) / max(snap_min, 1), 4)
+            else:
+                feat["winning_team_slowdown"] = 0
+
+            # Dominância absoluta (magnitude da assimetria)
+            feat["dominance_abs"] = abs(
+                (last.get("attacks_home") or 0) - (last.get("attacks_away") or 0) +
+                2 * ((last.get("dangerous_attacks_home") or 0) -
+                     (last.get("dangerous_attacks_away") or 0)))
+
+            # Eficiência / conversão
+            feat["corners_to_dangerous_ratio"] = round(
+                c_total / max(_total_dangerous, 1), 4)
+            feat["dangerous_to_attacks_ratio"] = round(
+                _total_dangerous / max(_total_attacks, 1), 4)
+            _shots_on = ((last.get("shots_on_target_home") or 0) +
+                         (last.get("shots_on_target_away") or 0))
+            feat["shots_to_dangerous_ratio"] = round(
+                _shots_on / max(_total_dangerous, 1), 4)
+            feat["conversion_drop"] = round(
+                feat["corners_last_5min"] / (_da_last5_total + 1), 4)
+
+            # Padrões de burst
+            feat["corner_burst_flag"] = int(feat["corners_last_5min"] >= 3)
+            feat["sustained_pressure_flag"] = int(
+                _da_last5_total >= 8 and _att_last5_total >= 15)
+
+            # Expectativa dinâmica (últimos 5 min vs média da liga)
+            _lr_5 = (_league_avg_v / 90) if _league_avg_v else None
+            if _lr_5:
+                _exp_5min = _lr_5 * 5
+                feat["expected_corners_5min"]  = round(_exp_5min, 4)
+                feat["corners_vs_expected_5"]  = round(
+                    feat["corners_last_5min"] - _exp_5min, 4)
+            else:
+                feat["expected_corners_5min"]  = None
+                feat["corners_vs_expected_5"]  = None
+
+            _exp_so_far = (_league_avg_v * snap_min / 90) if _league_avg_v else None
+            feat["relative_pace"] = round(
+                c_total / max(_exp_so_far, 0.1), 4) if _exp_so_far else None
+
+            feat["pace_acceleration"] = round(
+                (feat["corners_last_5min"] / 5) -
+                (c_total / max(snap_min, 1)), 4)
+
+            # Contexto final de jogo
+            _time_frac = snap_min / 90
+            feat["late_game_pressure"] = round(
+                feat["pressure_index_5"] * _time_frac, 4)
+            feat["urgency_factor"] = round(
+                abs(score_h - score_a) * _time_frac, 4)
+            feat["draw_pressure"] = round(
+                feat["is_draw"] * _time_frac * _da_last5_total, 4)
+
             # --- Features pré-jogo do panorama ---
             # Odds pré-jogo
             for col in ["corners_line", "corners_over_odds", "corners_under_odds",
