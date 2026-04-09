@@ -1977,12 +1977,22 @@ try:
         X_clf_te = _clffeat(preds_test_c,  dynamic_line,       X_test)
 
         if len(np.unique(over_actual_train)) == 2:
-            _model_clf = xgb.XGBClassifier(
+            _clf_params = dict(
                 n_estimators=600, max_depth=6, learning_rate=0.03,
                 subsample=0.8, colsample_bytree=0.4, min_child_weight=3,
                 eval_metric="logloss", random_state=42, verbosity=0,
                 early_stopping_rounds=30,
             )
+            if snap_min <= 20:
+                _clf_params.update(
+                    n_estimators=1000, max_depth=8, learning_rate=0.01,
+                    min_child_weight=1, colsample_bytree=0.6,
+                )
+            _pos_ratio = over_actual_train.mean()
+            if 0.1 < _pos_ratio < 0.9:
+                _clf_params["scale_pos_weight"] = round(
+                    (1 - _pos_ratio) / _pos_ratio, 4)
+            _model_clf = xgb.XGBClassifier(**_clf_params)
             _model_clf.fit(X_clf_tr, over_actual_train,
                            sample_weight=sample_weights_train,
                            eval_set=[(X_clf_ca, over_actual_cal)], verbose=False)
