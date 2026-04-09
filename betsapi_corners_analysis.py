@@ -2323,7 +2323,10 @@ try:
                     return np.column_stack([base, extra])
 
                 if len(np.unique(oa_tr)) == 2:
-                    _lc = LogisticRegression(C=1.0, max_iter=1000, solver="lbfgs")
+                    _lc = make_pipeline(
+                        StandardScaler(),
+                        LogisticRegression(C=1.0, max_iter=3000, solver="lbfgs")
+                    )
                     _lc.fit(_wf_logfeat(_pc_tr, dl_tr, Xtr, snap_min), oa_tr)
                     pl_te = _lc.predict_proba(
                         _wf_logfeat(_pc_te, dl_te, Xte, snap_min))[:, 1]
