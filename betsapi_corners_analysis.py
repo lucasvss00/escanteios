@@ -1139,6 +1139,8 @@ try:
     from scipy.stats import poisson as sp_poisson
     from scipy.stats import nbinom as sp_nbinom
     from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import make_pipeline
     import xgboost as xgb
     import joblib
 
