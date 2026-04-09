@@ -892,7 +892,7 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
             feat["corners_per_minute_recent"] = round(feat["corners_last_5min"] / 5, 4)
 
             # Time decay pressure: pressão recente decaindo com tempo desde último corner
-            _tslc2 = feat.get("time_since_last_corner") or 0
+            _tslc2 = max(feat.get("time_since_last_corner") or 0, 0)
             feat["time_decay_pressure"] = round(
                 feat["pressure_index_5"] * np.exp(-_tslc2 / 10), 4)
 
