@@ -1391,6 +1391,19 @@ try:
         "wasted_pressure",
         "is_high_pace", "is_low_pace",
         "pace_shift",
+        # Pressão / momentum / burst / expectativa dinâmica
+        "pressure_index_5",
+        "acceleration_attacks", "acceleration_dangerous",
+        "corners_per_minute_recent",
+        "time_decay_pressure",
+        "winning_team_slowdown",
+        "dominance_abs",
+        "corners_to_dangerous_ratio", "dangerous_to_attacks_ratio",
+        "shots_to_dangerous_ratio", "conversion_drop",
+        "corner_burst_flag", "sustained_pressure_flag",
+        "expected_corners_5min", "corners_vs_expected_5",
+        "relative_pace", "pace_acceleration",
+        "late_game_pressure", "urgency_factor", "draw_pressure",
     ]
 
     # Features de momentum (só disponíveis para minutos > 15)
