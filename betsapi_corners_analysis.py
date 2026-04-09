@@ -1957,7 +1957,8 @@ try:
                 StandardScaler(),
                 LogisticRegression(C=1.0, max_iter=3000, solver="lbfgs")
             )
-            _log_clf.fit(X_ltrain, over_actual_train)
+            _log_clf.fit(X_ltrain, over_actual_train,
+                         logisticregression__sample_weight=sample_weights_train)
             p_logistic_test = _log_clf.predict_proba(X_ltest)[:, 1]
             p_logistic_cal  = _log_clf.predict_proba(X_lcal)[:, 1]
         else:
