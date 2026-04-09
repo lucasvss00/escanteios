@@ -1775,10 +1775,10 @@ try:
 
         if len(np.unique(over_actual_train)) == 2:
             _model_clf = xgb.XGBClassifier(
-                n_estimators=300, max_depth=4, learning_rate=0.05,
-                subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                n_estimators=600, max_depth=6, learning_rate=0.03,
+                subsample=0.8, colsample_bytree=0.4, min_child_weight=3,
                 eval_metric="logloss", random_state=42, verbosity=0,
-                early_stopping_rounds=20,
+                early_stopping_rounds=30,
             )
             _model_clf.fit(X_clf_tr, over_actual_train,
                            eval_set=[(X_clf_ca, over_actual_cal)], verbose=False)
