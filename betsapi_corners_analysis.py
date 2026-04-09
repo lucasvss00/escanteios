@@ -1751,7 +1751,10 @@ try:
         X_lcal   = _logfeat(preds_cal_c,   dynamic_line_cal,   X_cal,   snap_min)
         X_ltest  = _logfeat(preds_test_c,  dynamic_line,       X_test,  snap_min)
         if len(np.unique(over_actual_train)) == 2:
-            _log_clf = LogisticRegression(C=1.0, max_iter=1000, solver="lbfgs")
+            _log_clf = make_pipeline(
+                StandardScaler(),
+                LogisticRegression(C=1.0, max_iter=3000, solver="lbfgs")
+            )
             _log_clf.fit(X_ltrain, over_actual_train)
             p_logistic_test = _log_clf.predict_proba(X_ltest)[:, 1]
             p_logistic_cal  = _log_clf.predict_proba(X_lcal)[:, 1]
