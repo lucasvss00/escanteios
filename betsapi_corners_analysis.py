@@ -2344,10 +2344,10 @@ try:
 
                 if len(np.unique(oa_tr)) == 2:
                     _xc = xgb.XGBClassifier(
-                        n_estimators=300, max_depth=4, learning_rate=0.05,
-                        subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                        n_estimators=600, max_depth=6, learning_rate=0.03,
+                        subsample=0.8, colsample_bytree=0.4, min_child_weight=3,
                         eval_metric="logloss", random_state=42, verbosity=0,
-                        early_stopping_rounds=20)
+                        early_stopping_rounds=30)
                     _xc.fit(_wf_clffeat(_pc_tr, dl_tr, Xtr), oa_tr,
                             eval_set=[(_wf_clffeat(_pc_ca, dl_ca, Xca), oa_ca)],
                             verbose=False)
