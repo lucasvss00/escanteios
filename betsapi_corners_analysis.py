@@ -1984,6 +1984,7 @@ try:
                 early_stopping_rounds=30,
             )
             _model_clf.fit(X_clf_tr, over_actual_train,
+                           sample_weight=sample_weights_train,
                            eval_set=[(X_clf_ca, over_actual_cal)], verbose=False)
             p_clf_test = _model_clf.predict_proba(X_clf_te)[:, 1]
             p_clf_cal  = _model_clf.predict_proba(X_clf_ca)[:, 1]
