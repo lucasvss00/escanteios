@@ -345,6 +345,11 @@ print("\nCalculando histórico dos times (rolling window=%d)..." % ROLLING_WINDO
 df_team_hist = build_team_history(df_pano)
 print(f"Histórico calculado para {len(df_team_hist):,} jogos")
 
+print("Calculando histórico de confrontos diretos (H2H)...")
+df_h2h = build_h2h_history(df_pano)
+_n_with_h2h = int((df_h2h["h2h_games"] > 0).sum()) if "h2h_games" in df_h2h.columns else 0
+print(f"H2H calculado para {len(df_h2h):,} jogos ({_n_with_h2h:,} com histórico prévio)")
+
 print("Calculando média e desvio padrão histórico de escanteios por liga...")
 league_avg, league_std = build_league_avg_corners(df_pano)
 
