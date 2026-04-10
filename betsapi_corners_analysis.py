@@ -1423,6 +1423,25 @@ try:
         "regime_x_corners_rate", "regime_x_pressure_home",
         "regime_x_dangerous_rate",
         "is_high_regime_low_corners", "is_low_regime_high_corners",
+        # Força ataque/defesa normalizada pela liga
+        "home_attack_strength", "away_attack_strength",
+        "home_defense_weakness", "away_defense_weakness",
+        # Matchup direto
+        "expected_corners_home", "expected_corners_away", "expected_corners_match",
+        # Forma recente (últimos 5/10 jogos)
+        "home_corners_last5_avg", "away_corners_last5_avg",
+        "home_corners_last10_avg", "away_corners_last10_avg",
+        # Consistência / volatilidade
+        "home_corners_std_last10", "away_corners_std_last10",
+        # Ajuste por adversário (schedule strength)
+        "home_adjusted_corners", "away_adjusted_corners",
+        # Estilo de jogo (proxy)
+        "home_corners_per_shot", "away_corners_per_shot",
+        "home_corners_per_dangerous", "away_corners_per_dangerous",
+        # Desvio em relação à liga
+        "home_vs_league", "away_vs_league",
+        # Prior pré-live
+        "pre_match_expected_total",
         # Sinal precoce (crucial para minuto 15)
         "hist_team_combo_avg", "hist_vs_league", "hist_defensive_strength",
         "no_corner_yet", "early_corner_surge", "first_corner_speed",
