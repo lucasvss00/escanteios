@@ -1478,6 +1478,10 @@ try:
         "days_rest_home", "days_rest_away",
         # Qualidade dos dados
         "n_snap_minutes",
+        # Head-to-head (confronto direto)
+        "h2h_games", "h2h_corners_avg", "h2h_corners_std",
+        "h2h_last3_avg", "h2h_corners_home_avg", "h2h_corners_away_avg",
+        "h2h_days_since_last",
         # Histórico dos times
         "hist_home_corners_avg", "hist_away_corners_avg",
         "hist_home_corners_scored_avg", "hist_away_corners_scored_avg",
