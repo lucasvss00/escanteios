@@ -212,6 +212,97 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
     return pd.DataFrame(result_rows)
 
 
+def build_h2h_history(df_pano: pd.DataFrame) -> pd.DataFrame:
+    """
+    Para cada jogo, calcula features de confronto direto (head-to-head)
+    com base APENAS nos jogos anteriores entre os dois mesmos times.
+    Sem data leakage: o histórico do par é atualizado APÓS calcular as features.
+
+    Retorna DataFrame com event_id + features h2h_*.
+    """
+    if "kickoff_dt" not in df_pano.columns:
+        return pd.DataFrame({"event_id": df_pano["event_id"]})
+
+    df = df_pano.copy()
+    df["kickoff_dt_parsed"] = pd.to_datetime(df["kickoff_dt"], errors="coerce")
+    df = df.sort_values("kickoff_dt_parsed").reset_index(drop=True)
+
+    # Histórico por par ordenado (simétrico): chave = frozenset({home_id, away_id})
+    # Cada item guarda: {"date", "corners_total", "home_id", "corners_home", "corners_away"}
+    pair_history: dict[frozenset, list[dict]] = {}
+    result_rows: list[dict] = []
+
+    for _, row in df.iterrows():
+        event_id = row["event_id"]
+        home_id = str(row.get("home_id", ""))
+        away_id = str(row.get("away_id", ""))
+        current_dt = row.get("kickoff_dt_parsed")
+
+        feat: dict = {"event_id": event_id}
+
+        if home_id and away_id and home_id != away_id:
+            key = frozenset({home_id, away_id})
+            hist = pair_history.get(key, [])
+        else:
+            hist = []
+
+        if hist:
+            totals = [h["corners_total"] for h in hist if h.get("corners_total") is not None]
+            feat["h2h_games"] = len(hist)
+            feat["h2h_corners_avg"] = round(float(np.mean(totals)), 2) if totals else None
+            feat["h2h_corners_std"] = (round(float(np.std(totals)), 2)
+                                        if len(totals) >= 2 else None)
+
+            # Últimos 3 confrontos
+            last3 = totals[-3:] if len(totals) >= 1 else []
+            feat["h2h_last3_avg"] = round(float(np.mean(last3)), 2) if last3 else None
+
+            # Média de escanteios do time atualmente em casa quando ELE jogou em casa
+            # contra este adversário (mesma perspectiva)
+            home_as_home = [h["corners_home"] for h in hist
+                            if h.get("home_id") == home_id and h.get("corners_home") is not None]
+            feat["h2h_corners_home_avg"] = (round(float(np.mean(home_as_home)), 2)
+                                             if home_as_home else None)
+
+            # Média de escanteios do visitante atual quando ELE jogou fora contra este adversário
+            away_as_away = [h["corners_away"] for h in hist
+                            if h.get("home_id") == home_id and h.get("corners_away") is not None]
+            feat["h2h_corners_away_avg"] = (round(float(np.mean(away_as_away)), 2)
+                                             if away_as_away else None)
+
+            last_dt = hist[-1].get("date")
+            if pd.notna(current_dt) and pd.notna(last_dt):
+                feat["h2h_days_since_last"] = int((current_dt - last_dt).days)
+            else:
+                feat["h2h_days_since_last"] = None
+        else:
+            feat["h2h_games"] = 0
+            feat["h2h_corners_avg"] = None
+            feat["h2h_corners_std"] = None
+            feat["h2h_last3_avg"] = None
+            feat["h2h_corners_home_avg"] = None
+            feat["h2h_corners_away_avg"] = None
+            feat["h2h_days_since_last"] = None
+
+        result_rows.append(feat)
+
+        # Atualiza APÓS calcular (sem leakage)
+        if home_id and away_id and home_id != away_id:
+            key = frozenset({home_id, away_id})
+            ct = row.get("corners_total")
+            ch = row.get("corners_home_total")
+            ca = row.get("corners_away_total")
+            pair_history.setdefault(key, []).append({
+                "date": current_dt,
+                "corners_total": float(ct) if ct is not None and pd.notna(ct) else None,
+                "corners_home": float(ch) if ch is not None and pd.notna(ch) else None,
+                "corners_away": float(ca) if ca is not None and pd.notna(ca) else None,
+                "home_id": home_id,  # quem foi mandante NESTE confronto passado
+            })
+
+    return pd.DataFrame(result_rows)
+
+
 def build_league_avg_corners(df_pano: pd.DataFrame) -> tuple[dict[str, float | None], dict[str, float | None]]:
     """
     Para cada jogo, calcula a média e o desvio padrão histórico de corners_total
