@@ -2677,6 +2677,9 @@ try:
 
         all_metadata["models"][snap_min] = {
             "features":         available,
+            "selected_features": selected_features,
+            "mae_split":         round(mae_split, 4) if mae_split is not None else None,
+            "split_accepted":    bool(split_accepted),
             "n_train":          len(X_train),
             "n_cal":            len(X_cal),
             "n_test":           len(X_test),
