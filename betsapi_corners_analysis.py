@@ -359,7 +359,7 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
 
         past5 = _get_past_values(5, _window_cols)
         past10 = _get_past_values(10, _window_cols)
-        past15 = _get_past_values(15, _window_cols + [c for c in ["corners_home", "corners_away"] if c in snap.columns])
+        past15 = _get_past_values(15, _window_cols)
 
         # Rename past columns
         for df_past, suffix in [(past5, "_p5"), (past10, "_p10"), (past15, "_p15")]:
