@@ -1802,6 +1802,7 @@ try:
         feature_cols: list[str],
         medians: dict | None = None,
         available_override: list[str] | None = None,
+        extra_cols: list[str] | None = None,
     ) -> tuple[list[str], pd.DataFrame]:
         """Filtra features existentes, remove ≥99% NaN, preenche NaN restantes.
 
