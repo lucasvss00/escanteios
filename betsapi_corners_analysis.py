@@ -1684,8 +1684,8 @@ try:
         df_out = df[available + [TARGET]].copy()
         df_out = df_out.dropna(subset=[TARGET])
 
-        # Preenche NaN: históricas/liga/encoding → mediana do treino; ao vivo → 0
-        fill_med = [c for c in available if c.startswith(("hist_", "league_"))
+        # Preenche NaN: históricas/liga/h2h/encoding → mediana do treino; ao vivo → 0
+        fill_med = [c for c in available if c.startswith(("hist_", "league_", "h2h_"))
                     or c.endswith("_target_enc")]
         fill_zero = [c for c in available if c not in fill_med]
 
