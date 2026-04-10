@@ -648,6 +648,91 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     hist_def = np.where(haa.isna() | aaa.isna(), np.nan, hist_def)
     df["hist_defensive_strength"] = np.round(hist_def, 4)
 
+    # ------------------------------------------------------------------
+    # Features históricas pré-jogo (normalizadas pela liga)
+    # ------------------------------------------------------------------
+    _la = np.where((league_avg_v <= 0) | np.isnan(league_avg_v), np.nan, league_avg_v)
+    _la_safe = np.maximum(np.nan_to_num(_la, nan=1.0), 0.01)
+
+    # Força de ataque / fraqueza defensiva (normalizada pela liga)
+    df["home_attack_strength"] = np.round(np.where(
+        np.isnan(_la) | haf.isna(), np.nan, haf.values / _la_safe), 4)
+    df["away_attack_strength"] = np.round(np.where(
+        np.isnan(_la) | aaf.isna(), np.nan, aaf.values / _la_safe), 4)
+    df["home_defense_weakness"] = np.round(np.where(
+        np.isnan(_la) | haa.isna(), np.nan, haa.values / _la_safe), 4)
+    df["away_defense_weakness"] = np.round(np.where(
+        np.isnan(_la) | aaa.isna(), np.nan, aaa.values / _la_safe), 4)
+
+    # Matchup direto (interação ataque vs defesa)
+    _has = df["home_attack_strength"].values
+    _aas = df["away_attack_strength"].values
+    _hdw = df["home_defense_weakness"].values
+    _adw = df["away_defense_weakness"].values
+    df["expected_corners_home"] = np.round(_has * _adw, 4)
+    df["expected_corners_away"] = np.round(_aas * _hdw, 4)
+    df["expected_corners_match"] = np.round(_has * _adw + _aas * _hdw, 4)
+
+    # Forma recente: últimos 5/10 jogos
+    df["home_corners_last5_avg"] = df.get(
+        "hist_home_corners_last5_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    df["away_corners_last5_avg"] = df.get(
+        "hist_away_corners_last5_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    df["home_corners_last10_avg"] = df.get(
+        "hist_home_corners_last10_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    df["away_corners_last10_avg"] = df.get(
+        "hist_away_corners_last10_avg", pd.Series(np.nan, index=df.index)).astype(float)
+
+    # Consistência / volatilidade
+    df["home_corners_std_last10"] = df.get(
+        "hist_home_corners_std_last10", pd.Series(np.nan, index=df.index)).astype(float)
+    df["away_corners_std_last10"] = df.get(
+        "hist_away_corners_std_last10", pd.Series(np.nan, index=df.index)).astype(float)
+
+    # Ajuste por adversário (força do calendário)
+    # Usa corners_conceded do oponente atual como proxy de schedule strength
+    _hcc_safe = np.maximum(np.nan_to_num(haa.values, nan=1.0), 0.01)
+    _acc_safe = np.maximum(np.nan_to_num(aaa.values, nan=1.0), 0.01)
+    df["home_adjusted_corners"] = np.round(np.where(
+        haf.isna() | aaa.isna(), np.nan, haf.values / _acc_safe), 4)
+    df["away_adjusted_corners"] = np.round(np.where(
+        aaf.isna() | haa.isna(), np.nan, aaf.values / _hcc_safe), 4)
+
+    # Estilo de jogo (proxy): corners por chute e por ataque perigoso
+    hist_son_h = df.get("hist_home_shots_on_target_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    hist_soff_h = df.get("hist_home_shots_off_target_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    hist_son_a = df.get("hist_away_shots_on_target_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    hist_soff_a = df.get("hist_away_shots_off_target_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    hist_shots_h = hist_son_h.values + np.nan_to_num(hist_soff_h.values, nan=0.0)
+    hist_shots_a = hist_son_a.values + np.nan_to_num(hist_soff_a.values, nan=0.0)
+
+    hist_da_h_v = df.get("hist_home_dangerous_attacks_avg", pd.Series(np.nan, index=df.index)).astype(float).values
+    hist_da_a_v = df.get("hist_away_dangerous_attacks_avg", pd.Series(np.nan, index=df.index)).astype(float).values
+
+    df["home_corners_per_shot"] = np.round(np.where(
+        haf.isna() | (hist_shots_h <= 0), np.nan,
+        haf.values / np.maximum(hist_shots_h, 0.01)), 4)
+    df["away_corners_per_shot"] = np.round(np.where(
+        aaf.isna() | (hist_shots_a <= 0), np.nan,
+        aaf.values / np.maximum(hist_shots_a, 0.01)), 4)
+    df["home_corners_per_dangerous"] = np.round(np.where(
+        haf.isna() | np.isnan(hist_da_h_v) | (hist_da_h_v <= 0), np.nan,
+        haf.values / np.maximum(hist_da_h_v, 0.01)), 4)
+    df["away_corners_per_dangerous"] = np.round(np.where(
+        aaf.isna() | np.isnan(hist_da_a_v) | (hist_da_a_v <= 0), np.nan,
+        aaf.values / np.maximum(hist_da_a_v, 0.01)), 4)
+
+    # Desvio em relação à liga
+    df["home_vs_league"] = np.round(np.where(
+        haf.isna() | np.isnan(_la), np.nan, haf.values - _la / 2), 4)
+    df["away_vs_league"] = np.round(np.where(
+        aaf.isna() | np.isnan(_la), np.nan, aaf.values - _la / 2), 4)
+
+    # Prior de jogo (baseline pré-live)
+    df["pre_match_expected_total"] = np.round(np.where(
+        np.isnan(_la) | np.isnan(_has * _adw + _aas * _hdw), np.nan,
+        (_has * _adw + _aas * _hdw) * _la), 4)
+
     df["no_corner_yet"] = (c_total == 0).astype(int)
     df["early_corner_surge"] = np.round(c_total / np.maximum(snap_min_v / 15, 1), 4)
 
