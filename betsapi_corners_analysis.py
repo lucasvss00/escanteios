@@ -1519,6 +1519,18 @@ try:
         print(f"  Amostras: treino={len(X_train):,}  cal={len(X_cal):,}  teste={len(X_test):,}")
         print(f"  Features: {len(available)}")
 
+        # --- Correlação de cada feature com o target (treino) ---
+        _corr_data = X_train.copy()
+        _corr_data["_target"] = y_train.values
+        _corrs = _corr_data.corr(numeric_only=True)["_target"].drop("_target", errors="ignore")
+        _corrs = _corrs.dropna().sort_values(key=abs, ascending=False)
+        print(f"\n  Correlação com {TARGET} ({len(_corrs)} features):")
+        print(f"    {'Feature':<45s}  {'Corr':>8s}")
+        print(f"    {'─'*45}  {'─'*8}")
+        for _fname, _cval in _corrs.items():
+            print(f"    {_fname:<45s}  {_cval:>+8.4f}")
+        print()
+
         # ==================================================================
         # 6a. Modelo principal — Optuna tuning com cache de hiperparâmetros
         #
