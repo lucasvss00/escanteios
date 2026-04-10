@@ -2455,13 +2455,127 @@ try:
             n_best       = n_total
 
         # ==================================================================
-        # 6d. Feature importance (top 10)
+        # 6d. Feature importance — SHAP + permutation + seleção iterativa
+        #
+        # Substitui o feature_importances_ nativo (enviesado pró alta
+        # cardinalidade) por:
+        #   (1) SHAP TreeExplainer no conjunto de validação
+        #   (2) Permutation importance no cal set (sanity check)
+        #   (3) Remoção iterativa do bottom 25% e retreino; aceita
+        #       se MAE não piorar mais que 1%
+        #
+        # Artefatos por minuto:
+        #   dados_escanteios/shap_summary_min{M}.png
+        #   dados_escanteios/feature_ranking_min{M}.csv
+        #   dados_escanteios/selected_features_min{M}.json
         # ==================================================================
-        feat_imp = pd.Series(model_mean.feature_importances_, index=available)
-        top10 = feat_imp.sort_values(ascending=False).head(10)
-        print(f"\n  Top 10 features:")
-        for i, (feat, val) in enumerate(top10.items(), 1):
-            print(f"    {i:2d}. {feat:<42s} {val:.4f}")
+        _SKIP_SHAP = "--no-shap" in _sys.argv
+        selected_features = list(available)  # default: mantém todas
+
+        if not _SKIP_SHAP:
+            try:
+                import shap as _shap
+                from sklearn.inspection import permutation_importance as _perm_imp
+                import json as _json
+
+                # --- (1) SHAP no cal set ---
+                _explainer = _shap.TreeExplainer(model_mean)
+                _shap_vals = _explainer.shap_values(X_cal)
+                _shap_abs_mean = np.abs(_shap_vals).mean(axis=0)
+                _shap_ser = pd.Series(_shap_abs_mean, index=available).sort_values(ascending=False)
+
+                # --- (2) Permutation importance no cal set ---
+                try:
+                    _perm = _perm_imp(model_mean, X_cal, y_cal,
+                                       n_repeats=5, random_state=42,
+                                       scoring="neg_mean_absolute_error")
+                    _perm_ser = pd.Series(_perm.importances_mean, index=available)
+                except Exception as _e:
+                    print(f"  (permutation importance falhou: {_e})")
+                    _perm_ser = pd.Series(0.0, index=available)
+
+                # --- Ranking combinado ---
+                _ranking = pd.DataFrame({
+                    "shap_abs_mean": _shap_ser,
+                    "permutation": _perm_ser,
+                }).fillna(0).sort_values("shap_abs_mean", ascending=False)
+                _ranking.to_csv(DATA_DIR / f"feature_ranking_min{snap_min}.csv")
+
+                print(f"\n  Top 10 features (SHAP):")
+                for i, (feat, row_r) in enumerate(_ranking.head(10).iterrows(), 1):
+                    print(f"    {i:2d}. {feat:<42s} shap={row_r['shap_abs_mean']:.4f}  "
+                          f"perm={row_r['permutation']:+.4f}")
+
+                # --- SHAP summary plot ---
+                try:
+                    import matplotlib
+                    matplotlib.use("Agg")
+                    import matplotlib.pyplot as _plt
+                    _plt.figure()
+                    _shap.summary_plot(_shap_vals, X_cal, show=False, max_display=20)
+                    _plt.tight_layout()
+                    _plt.savefig(DATA_DIR / f"shap_summary_min{snap_min}.png",
+                                 dpi=100, bbox_inches="tight")
+                    _plt.close("all")
+                except Exception as _e:
+                    print(f"  (SHAP plot falhou: {_e})")
+
+                # --- (3) Seleção iterativa: remove bottom 25% ---
+                n_keep = max(10, int(len(available) * 0.75))
+                _candidate_features = _ranking.head(n_keep).index.tolist()
+                _removed = [f for f in available if f not in _candidate_features]
+
+                X_train_red = X_train[_candidate_features]
+                X_cal_red   = X_cal[_candidate_features]
+                X_test_red  = X_test[_candidate_features]
+
+                _model_red = xgb.XGBRegressor(**_best_xgb)
+                _model_red.fit(X_train_red, y_train,
+                               eval_set=[(X_cal_red, y_cal)], verbose=False)
+                _preds_red = _model_red.predict(X_test_red)
+                if use_calibration:
+                    _cal_red = IsotonicRegression(y_min=0, y_max=35, out_of_bounds="clip")
+                    _cal_red.fit(_model_red.predict(X_cal_red), y_cal)
+                    _preds_red = _cal_red.predict(_preds_red)
+                _mae_red = mean_absolute_error(y_test, _preds_red)
+
+                _tolerance = mae_best * 1.01  # aceita se piorar ≤1%
+                _accepted = _mae_red <= _tolerance
+                print(f"\n  Feature selection iterativa:")
+                print(f"    Features: {len(available)} → {len(_candidate_features)} "
+                      f"(removidas {len(_removed)})")
+                print(f"    MAE antes: {mae_best:.4f}  MAE depois: {_mae_red:.4f}  "
+                      f"({'ACEITO' if _accepted else 'REVERTIDO'})")
+                if _accepted:
+                    selected_features = _candidate_features
+
+                # --- Salva lista de features selecionadas ---
+                with open(DATA_DIR / f"selected_features_min{snap_min}.json", "w") as _fp:
+                    _json.dump({
+                        "snap_minute": snap_min,
+                        "n_original": len(available),
+                        "n_selected": len(selected_features),
+                        "features": selected_features,
+                        "removed": _removed if _accepted else [],
+                        "mae_before": round(float(mae_best), 4),
+                        "mae_after": round(float(_mae_red), 4),
+                        "accepted": bool(_accepted),
+                    }, _fp, indent=2)
+
+            except ImportError:
+                print(f"\n  (shap não instalado — usando feature_importances_ nativo. "
+                      f"pip install shap)")
+                feat_imp = pd.Series(model_mean.feature_importances_, index=available)
+                top10 = feat_imp.sort_values(ascending=False).head(10)
+                print(f"  Top 10 features (gain):")
+                for i, (feat, val) in enumerate(top10.items(), 1):
+                    print(f"    {i:2d}. {feat:<42s} {val:.4f}")
+        else:
+            feat_imp = pd.Series(model_mean.feature_importances_, index=available)
+            top10 = feat_imp.sort_values(ascending=False).head(10)
+            print(f"\n  Top 10 features (gain):")
+            for i, (feat, val) in enumerate(top10.items(), 1):
+                print(f"    {i:2d}. {feat:<42s} {val:.4f}")
 
         # ==================================================================
         # 6e. Salva artefatos
