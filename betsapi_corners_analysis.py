@@ -1749,7 +1749,7 @@ try:
             continue
 
         fill_med_cols = [c for c in available_train
-                         if c.startswith(("hist_", "league_")) or c.endswith("_target_enc")]
+                         if c.startswith(("hist_", "league_", "h2h_")) or c.endswith("_target_enc")]
         train_medians = {c: df_train_clean[c].median() for c in fill_med_cols}
 
         # Aplica as mesmas colunas e medianas do treino ao cal e test
