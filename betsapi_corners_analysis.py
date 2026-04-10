@@ -1645,6 +1645,7 @@ try:
             df_features = build_live_features(
                 df_snap, df_pano, df_team_hist, SNAPSHOT_MINUTES,
                 league_avg_map=league_avg, league_std_map=league_std,
+                df_h2h=df_h2h,
             )
             df_features = df_features[df_features["target_corners_total"].notna()]
             df_features = df_features[df_features["target_corners_total"] >= 0]
