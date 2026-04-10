@@ -1819,7 +1819,8 @@ try:
             null_pcts = df[available].isnull().mean()
             available = [c for c in available if null_pcts[c] < 0.99]
 
-        df_out = df[available + [TARGET]].copy()
+        _extra = [c for c in (extra_cols or []) if c in df.columns and c not in available and c != TARGET]
+        df_out = df[available + [TARGET] + _extra].copy()
         df_out = df_out.dropna(subset=[TARGET])
 
         # Preenche NaN: históricas/liga/h2h/encoding → mediana do treino; ao vivo → 0
