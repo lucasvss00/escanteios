@@ -244,869 +244,732 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                          league_avg_map: dict | None = None,
                          league_std_map: dict | None = None) -> pd.DataFrame:
     """
+    Versão vetorizada — ~10-50× mais rápida que a versão com loop.
     Para cada jogo e cada minuto de snapshot:
       - Features: tudo que aconteceu ATÉ aquele minuto
       - Features pré-jogo: odds, H2H, histórico dos times
       - Features temporais: dia da semana, hora, mês
       - Target: total de escanteios do jogo inteiro (de df_pano)
     """
-    # Pré-indexa panorama e histórico por event_id
-    pano_idx = df_pano.set_index("event_id") if "event_id" in df_pano.columns else pd.DataFrame()
-    hist_idx = df_hist.set_index("event_id") if "event_id" in df_hist.columns else pd.DataFrame()
+    import logging
+    log = logging.getLogger(__name__)
 
-    records = []
+    # ------------------------------------------------------------------
+    # 0. Preparação: filtrar jogos válidos, criar cross-join
+    # ------------------------------------------------------------------
+    valid_events = set(df_pano["event_id"].unique()) & set(df_snap["event_id"].unique())
+    snap = df_snap[df_snap["event_id"].isin(valid_events)].copy()
+    snap = snap.sort_values(["event_id", "minute"]).reset_index(drop=True)
 
-    for event_id, group in df_snap.groupby("event_id"):
-        if event_id not in pano_idx.index:
+    # Colunas numéricas do snapshot — preencher NaN com 0 para aritmética
+    _STAT_COLS = [
+        "corners_home", "corners_away",
+        "attacks_home", "attacks_away",
+        "dangerous_attacks_home", "dangerous_attacks_away",
+        "shots_on_target_home", "shots_on_target_away",
+        "shots_off_target_home", "shots_off_target_away",
+        "yellow_cards_home", "yellow_cards_away",
+        "red_cards_home", "red_cards_away",
+        "fouls_home", "fouls_away",
+        "saves_home", "saves_away",
+        "offsides_home", "offsides_away",
+        "goal_kicks_home", "goal_kicks_away",
+        "score_home", "score_away",
+    ]
+    _STAT_COLS = [c for c in _STAT_COLS if c in snap.columns]
+    _POSS_COLS = [c for c in ["possession_home", "possession_away"] if c in snap.columns]
+
+    # ------------------------------------------------------------------
+    # 1. Para cada snapshot minute, pegar o "last" row (maior minute <= snap_min)
+    #    e os valores em (snap_min - N) para janelas de N minutos
+    # ------------------------------------------------------------------
+    all_frames = []
+
+    for snap_min in snapshot_minutes:
+        log.info(f"  build_live_features: processando minuto {snap_min}...")
+
+        until = snap[snap["minute"] <= snap_min].copy()
+        if until.empty:
             continue
-        pano = pano_idx.loc[event_id]
-        if isinstance(pano, pd.DataFrame):
-            pano = pano.iloc[0]
 
-        hist = hist_idx.loc[event_id] if event_id in hist_idx.index else pd.Series(dtype=object)
-        if isinstance(hist, pd.DataFrame):
-            hist = hist.iloc[0]
+        # "last" = última linha por event_id (minute mais alto <= snap_min)
+        last = until.groupby("event_id").last().reset_index()
+        # n_snap_minutes = contagem de linhas por event_id
+        n_mins = until.groupby("event_id").size().reset_index(name="n_snap_minutes")
+        last = last.merge(n_mins, on="event_id", how="left")
+        last["snap_minute"] = snap_min
 
-        group = group.sort_values("minute").reset_index(drop=True)
+        # Possession mean até snap_min
+        for pc in _POSS_COLS:
+            _pmean = until.groupby("event_id")[pc].mean().reset_index(name=f"{pc}_avg_tmp")
+            last = last.merge(_pmean, on="event_id", how="left")
 
-        for snap_min in snapshot_minutes:
-            until = group[group["minute"] <= snap_min]
-            if until.empty:
-                continue
+        # --- Windowed values: valor no minuto (snap_min - N) ---
+        def _get_past_values(n: int, cols: list[str]) -> pd.DataFrame:
+            """Pega o último valor de cada col no minuto <= (snap_min - n)."""
+            past = snap[snap["minute"] <= (snap_min - n)]
+            if past.empty:
+                return pd.DataFrame({"event_id": last["event_id"]})
+            past_last = past.groupby("event_id")[cols].last().reset_index()
+            return past_last
 
-            last = until.iloc[-1]
-            n_minutes = len(until)
+        _window_cols = [c for c in [
+            "corners_home", "corners_away",
+            "attacks_home", "attacks_away",
+            "dangerous_attacks_home", "dangerous_attacks_away",
+            "shots_on_target_home", "shots_on_target_away",
+            "shots_off_target_home", "shots_off_target_away",
+        ] if c in snap.columns]
 
-            # --- Features cumulativas até snap_min ---
-            feat = {
-                "event_id":    event_id,
-                "snap_minute": snap_min,
-                "league_id":   last.get("league_id", ""),
-                "league_name": last.get("league_name", ""),
-                "home_team":   last.get("home_team", ""),
-                "away_team":   last.get("away_team", ""),
-                "kickoff_dt":  last.get("kickoff_dt", ""),
+        past5 = _get_past_values(5, _window_cols)
+        past10 = _get_past_values(10, _window_cols)
+        past15 = _get_past_values(15, _window_cols + [c for c in ["corners_home", "corners_away"] if c in snap.columns])
 
-                # Escanteios até agora
-                "corners_home_so_far":  last.get("corners_home"),
-                "corners_away_so_far":  last.get("corners_away"),
-                "corners_total_so_far": (last.get("corners_home") or 0) +
-                                         (last.get("corners_away") or 0),
+        # Rename past columns
+        for df_past, suffix in [(past5, "_p5"), (past10, "_p10"), (past15, "_p15")]:
+            for c in df_past.columns:
+                if c != "event_id":
+                    df_past.rename(columns={c: c + suffix}, inplace=True)
 
-                # Ritmo de escanteios (por minuto até agora)
-                "corners_rate_per_min": round(
-                    ((last.get("corners_home") or 0) + (last.get("corners_away") or 0))
-                    / max(snap_min, 1), 4
-                ),
+        last = last.merge(past5, on="event_id", how="left")
+        last = last.merge(past10, on="event_id", how="left")
+        last = last.merge(past15, on="event_id", how="left")
 
-                # Posse de bola média
-                "possession_home_avg": _mean_col(until, "possession_home"),
-                "possession_away_avg": _mean_col(until, "possession_away"),
+        # --- First corner minute per event ---
+        _ct = until.copy()
+        _ct["_ct"] = _ct["corners_home"].fillna(0) + _ct["corners_away"].fillna(0)
+        _first_corner = _ct[_ct["_ct"] > 0].groupby("event_id")["minute"].first().reset_index(
+            name="_first_corner_min")
+        last = last.merge(_first_corner, on="event_id", how="left")
 
-                # Ataques acumulados
-                "attacks_home":             last.get("attacks_home"),
-                "attacks_away":             last.get("attacks_away"),
-                "dangerous_attacks_home":   last.get("dangerous_attacks_home"),
-                "dangerous_attacks_away":   last.get("dangerous_attacks_away"),
-
-                # Chutes
-                "shots_on_target_home":  last.get("shots_on_target_home"),
-                "shots_on_target_away":  last.get("shots_on_target_away"),
-                "shots_off_target_home": last.get("shots_off_target_home"),
-                "shots_off_target_away": last.get("shots_off_target_away"),
-
-                # Cartões e faltas
-                "yellow_cards_home": last.get("yellow_cards_home"),
-                "yellow_cards_away": last.get("yellow_cards_away"),
-                "red_cards_home":    last.get("red_cards_home"),
-                "red_cards_away":    last.get("red_cards_away"),
-                "fouls_home":        last.get("fouls_home"),
-                "fouls_away":        last.get("fouls_away"),
-
-                # Saves, offsides, goal kicks (índices 9-11 do stats_trend)
-                "saves_home":        last.get("saves_home"),
-                "saves_away":        last.get("saves_away"),
-                "offsides_home":     last.get("offsides_home"),
-                "offsides_away":     last.get("offsides_away"),
-                "goal_kicks_home":   last.get("goal_kicks_home"),
-                "goal_kicks_away":   last.get("goal_kicks_away"),
-
-                # Score ao vivo no minuto
-                "score_home": last.get("score_home"),
-                "score_away": last.get("score_away"),
-
-                # Contexto de placar
-                "score_diff": _safe_sub(last.get("score_home"), last.get("score_away")),
-                "total_red_cards": (last.get("red_cards_home") or 0) +
-                                    (last.get("red_cards_away") or 0),
-                "red_card_diff": _safe_sub(last.get("red_cards_home"),
-                                           last.get("red_cards_away")),
-
-                # Diferenças home - away (assimetria de pressão)
-                "corners_diff":          _diff(last, "corners_home", "corners_away"),
-                "attacks_diff":          _diff(last, "attacks_home", "attacks_away"),
-                "dangerous_attacks_diff":_diff(last, "dangerous_attacks_home",
-                                                     "dangerous_attacks_away"),
-                "shots_on_target_diff":  _diff(last, "shots_on_target_home",
-                                                     "shots_on_target_away"),
-
-                # Aceleração de escanteios (últimos 15 min vs antes)
-                "corners_last_15_home": _last_n_minutes(until, snap_min, 15, "corners_home"),
-                "corners_last_15_away": _last_n_minutes(until, snap_min, 15, "corners_away"),
-
-                # Número real de snapshots disponíveis
-                "n_snap_minutes": n_minutes,
-
-                # Média histórica de escanteios da liga (jogos anteriores, sem data leak)
-                "league_avg_corners": league_avg_map.get(str(event_id)) if league_avg_map else None,
-
-                # Taxa de ataques perigosos por minuto
-                "dangerous_attacks_rate": round(
-                    ((last.get("dangerous_attacks_home") or 0) +
-                     (last.get("dangerous_attacks_away") or 0))
-                    / max(snap_min, 1), 4
-                ),
-
-                # Proporção de escanteios por ataque total
-                "corners_per_attack_ratio": round(
-                    ((last.get("corners_home") or 0) + (last.get("corners_away") or 0))
-                    / max((last.get("attacks_home") or 0) + (last.get("attacks_away") or 0), 1),
-                    4
-                ),
-            }
-
-            # --- Features granulares adicionais ---
-            c_home = feat["corners_home_so_far"] or 0
-            c_away = feat["corners_away_so_far"] or 0
-            c_total = c_home + c_away
-
-            # Janelas temporais: últimos 5 e 10 minutos
-            corners_last_5_home = _last_n_minutes(until, snap_min, 5, "corners_home")
-            corners_last_5_away = _last_n_minutes(until, snap_min, 5, "corners_away")
-            corners_last_10_home = _last_n_minutes(until, snap_min, 10, "corners_home")
-            corners_last_10_away = _last_n_minutes(until, snap_min, 10, "corners_away")
-
-            feat["corners_last_5min"] = ((corners_last_5_home or 0) +
-                                          (corners_last_5_away or 0))
-            feat["corners_last_10min"] = ((corners_last_10_home or 0) +
-                                           (corners_last_10_away or 0))
-            feat["corners_acceleration_5_10"] = (feat["corners_last_5min"] -
-                                                  feat["corners_last_10min"])
-            feat["corners_rate_last_5"] = round(feat["corners_last_5min"] / 5.0, 4)
-            feat["corners_rate_last_10"] = round(feat["corners_last_10min"] / 10.0, 4)
-
-            feat["home_corners_last_5"] = corners_last_5_home
-            feat["away_corners_last_5"] = corners_last_5_away
-            feat["home_corners_last_10"] = corners_last_10_home
-            feat["away_corners_last_10"] = corners_last_10_away
-
-            # Estado do jogo
-            score_h = last.get("score_home") or 0
-            score_a = last.get("score_away") or 0
-            feat["is_draw"] = int(score_h == score_a)
-
-            # Pressão do time que lidera/perde (corners últimos 10 min)
-            if score_h > score_a:
-                feat["leading_team_pressure"] = corners_last_10_home or 0
-                feat["losing_team_pressure"] = corners_last_10_away or 0
-            elif score_a > score_h:
-                feat["leading_team_pressure"] = corners_last_10_away or 0
-                feat["losing_team_pressure"] = corners_last_10_home or 0
+        # --- Half-time values (corners at minute 45) ---
+        if snap_min > 45:
+            at45 = snap[snap["minute"] <= 45]
+            if not at45.empty:
+                ht_vals = at45.groupby("event_id")[["corners_home", "corners_away"]].last().reset_index()
+                ht_vals.rename(columns={"corners_home": "_ht_ch", "corners_away": "_ht_ca"}, inplace=True)
+                last = last.merge(ht_vals, on="event_id", how="left")
             else:
-                feat["leading_team_pressure"] = 0
-                feat["losing_team_pressure"] = 0
-
-            # Tempo restante
-            feat["time_remaining"] = 90 - snap_min
-            feat["total_time_remaining"] = 90 - snap_min + 3  # ~3 min acréscimo médio
-
-            # Proporção de escanteios por time
-            feat["home_corner_share"] = round(c_home / max(c_total, 1), 4)
-            feat["away_corner_share"] = round(c_away / max(c_total, 1), 4)
-
-            # Taxa por time
-            feat["home_corners_rate"] = round(c_home / max(snap_min, 1), 4)
-            feat["away_corners_rate"] = round(c_away / max(snap_min, 1), 4)
-
-            # Expectativa combinada de escanteios (hist home attack + away defense)
-            home_avg_for = hist.get("hist_home_corners_scored_avg")
-            home_avg_against = hist.get("hist_home_corners_conceded_avg")
-            away_avg_for = hist.get("hist_away_corners_scored_avg")
-            away_avg_against = hist.get("hist_away_corners_conceded_avg")
-
-            home_exp = None
-            away_exp = None
-            match_exp = None
-            if home_avg_for is not None and away_avg_against is not None:
-                home_exp = (float(home_avg_for) + float(away_avg_against)) / 2
-            if away_avg_for is not None and home_avg_against is not None:
-                away_exp = (float(away_avg_for) + float(home_avg_against)) / 2
-            if home_exp is not None and away_exp is not None:
-                match_exp = home_exp + away_exp
-
-            feat["home_expected_corners"] = round(home_exp, 4) if home_exp is not None else None
-            feat["away_expected_corners"] = round(away_exp, 4) if away_exp is not None else None
-            feat["match_expected_corners"] = round(match_exp, 4) if match_exp is not None else None
-
-            # Desvio do ritmo esperado
-            if match_exp and match_exp > 0:
-                expected_at_min = match_exp * snap_min / 90
-                feat["corners_vs_expected"] = round(c_total - expected_at_min, 4)
-                feat["pace_ratio"] = round(c_total / max(expected_at_min, 0.1), 4)
-            else:
-                feat["corners_vs_expected"] = None
-                feat["pace_ratio"] = None
-
-            # ----------------------------------------------------------------
-            # Sinal precoce: features que carregam informação mesmo com
-            # poucos minutos de jogo (crucial para minuto 15)
-            # ----------------------------------------------------------------
-
-            # Tendência combinada dos times (simétrica)
-            _hist_combo_avg = None
-            if home_avg_for is not None and away_avg_for is not None:
-                _hist_combo_avg = (float(home_avg_for) + float(away_avg_for)) / 2
-            feat["hist_team_combo_avg"] = (
-                round(_hist_combo_avg, 4) if _hist_combo_avg is not None else None)
-
-            # Par de times vs média da liga
-            _league_avg_early = league_avg_map.get(str(event_id)) if league_avg_map else None
-            if _hist_combo_avg is not None and _league_avg_early is not None:
-                feat["hist_vs_league"] = round(
-                    _hist_combo_avg - _league_avg_early / 2, 4)
-            else:
-                feat["hist_vs_league"] = None
-
-            # Fraqueza defensiva combinada
-            _hist_def_strength = None
-            if home_avg_against is not None and away_avg_against is not None:
-                _hist_def_strength = (
-                    float(home_avg_against) + float(away_avg_against)) / 2
-            feat["hist_defensive_strength"] = (
-                round(_hist_def_strength, 4)
-                if _hist_def_strength is not None else None)
-
-            # Flag: nenhum escanteio ainda
-            feat["no_corner_yet"] = int(c_total == 0)
-
-            # Taxa amplificada para início de jogo
-            feat["early_corner_surge"] = round(
-                c_total / max(snap_min / 15, 1), 4)
-
-            # Velocidade do primeiro escanteio
-            _first_corner_min = 0
-            if c_total > 0:
-                _ch = until["corners_home"].fillna(0)
-                _ca_col = until["corners_away"].fillna(0)
-                _ct_series = _ch + _ca_col
-                _first_mask = _ct_series > 0
-                if _first_mask.any():
-                    _first_corner_min = int(
-                        until.loc[_first_mask.idxmax(), "minute"])
-            feat["first_corner_speed"] = (
-                round(1.0 / max(_first_corner_min, 1), 4)
-                if _first_corner_min > 0 else 0)
-
-            # Divergência ritmo real vs expectativa histórica
-            if match_exp and match_exp > 0:
-                _exp_rate_pm = match_exp / 90
-                _actual_rate = c_total / max(snap_min, 1)
-                feat["hist_actual_rate_ratio"] = round(
-                    _actual_rate / max(_exp_rate_pm, 0.01), 4)
-            else:
-                feat["hist_actual_rate_ratio"] = None
-
-            # Ataques perigosos combinados (qualidade de ataque)
-            _hist_da_h = hist.get("hist_home_dangerous_attacks_avg")
-            _hist_da_a = hist.get("hist_away_dangerous_attacks_avg")
-            if _hist_da_h is not None and _hist_da_a is not None:
-                feat["hist_combined_dangerous"] = round(
-                    (float(_hist_da_h) + float(_hist_da_a)) / 2, 4)
-            else:
-                feat["hist_combined_dangerous"] = None
-
-            # Liga: desvio padrão e z-score
-            _league_avg = league_avg_map.get(str(event_id)) if league_avg_map else None
-            _league_std = league_std_map.get(str(event_id)) if league_std_map else None
-            feat["league_std_corners"] = _league_std
-
-            if _league_avg is not None and _league_std is not None and _league_std > 0:
-                expected_at_min_lg = _league_avg * snap_min / 90
-                feat["z_score_corners"] = round(
-                    (c_total - expected_at_min_lg) / _league_std, 4)
-            else:
-                feat["z_score_corners"] = None
-
-            # Estilo do time relativo à liga
-            if _league_avg is not None:
-                half_league = _league_avg / 2  # média por time na liga
-                feat["team_style_home"] = (round(float(home_avg_for) - half_league, 4)
-                                            if home_avg_for is not None else None)
-                feat["team_style_away"] = (round(float(away_avg_for) - half_league, 4)
-                                            if away_avg_for is not None else None)
-            else:
-                feat["team_style_home"] = None
-                feat["team_style_away"] = None
-
-            # Índice de intensidade
-            if _league_avg is not None and _league_avg > 0:
-                league_rate = _league_avg / 90
-                feat["intensity_index"] = round(
-                    feat["corners_rate_last_10"] / max(league_rate, 0.01), 4)
-            else:
-                feat["intensity_index"] = None
-
-            # Late game boost
-            feat["late_game_boost"] = round(
-                feat["corners_last_10min"] * (snap_min / 90), 4)
-
-            # Índice de pressão por time (últimos 10 min)
-            h10 = corners_last_10_home or 0
-            a10 = corners_last_10_away or 0
-            feat["pressure_index_home"] = round(h10 / max(a10, 0.5), 4)
-            feat["pressure_index_away"] = round(a10 / max(h10, 0.5), 4)
-
-            # Fator estado do jogo × tempo
-            feat["game_state_factor"] = round((score_h - score_a) * snap_min, 4)
-
-            # Pressão de comeback (time perdendo após min 60)
-            feat["comeback_pressure"] = int(snap_min > 60 and score_h != score_a)
-
-            # Dominância de escanteios
-            feat["dominance_index"] = round(
-                abs(feat["home_corner_share"] - 0.5), 4)
-
-            # Volatilidade (diferença entre ritmos de 5 e 10 min)
-            feat["volatility_index"] = round(abs(
-                feat["corners_rate_last_5"] - feat["corners_rate_last_10"]), 4)
-
-            # Momentum shift
-            feat["momentum_shift"] = round(
-                feat["corners_last_5min"] - feat["corners_last_10min"] / 2, 4)
-
-            # Projeção de escanteios restantes
-            feat["expected_remaining_corners"] = round(
-                feat["corners_rate_per_min"] * feat["total_time_remaining"], 4)
-            feat["adjusted_expected_remaining"] = round(
-                feat["corners_rate_last_10"] * feat["total_time_remaining"], 4)
-
-            # Análise 1º vs 2º tempo (só para snap_min > 45)
-            if snap_min > 45:
-                at_45 = group[group["minute"] <= 45]
-                if not at_45.empty:
-                    last_45 = at_45.iloc[-1]
-                    c_45_home = last_45.get("corners_home") or 0
-                    c_45_away = last_45.get("corners_away") or 0
-                    first_half = c_45_home + c_45_away
-                else:
-                    first_half = 0
-
-                second_half_so_far = c_total - first_half
-                mins_2nd = max(snap_min - 45, 1)
-                second_half_rate = second_half_so_far / mins_2nd
-                first_half_rate = first_half / 45
-
-                feat["first_half_corners"] = first_half
-                feat["second_half_corners_so_far"] = second_half_so_far
-                feat["second_half_rate"] = round(second_half_rate, 4)
-                feat["delta_rate_halves"] = round(second_half_rate - first_half_rate, 4)
-                feat["fatigue_factor"] = (round(
-                    feat["corners_rate_last_10"] / max(first_half_rate, 0.01), 4)
-                    if first_half > 0 else None)
-            else:
-                feat["first_half_corners"] = None
-                feat["second_half_corners_so_far"] = None
-                feat["second_half_rate"] = None
-                feat["delta_rate_halves"] = None
-                feat["fatigue_factor"] = None
-
-            # Features adicionais sugeridas
-            feat["possession_diff"] = _safe_sub(
-                feat["possession_home_avg"], feat["possession_away_avg"])
-            feat["fouls_diff"] = _diff(last, "fouls_home", "fouls_away")
-            feat["fouls_total"] = ((last.get("fouls_home") or 0) +
-                                    (last.get("fouls_away") or 0))
-            feat["corners_per_dangerous_attack"] = round(
-                c_total / max((last.get("dangerous_attacks_home") or 0) +
-                               (last.get("dangerous_attacks_away") or 0), 1), 4)
-            total_shots = ((last.get("shots_on_target_home") or 0) +
-                           (last.get("shots_on_target_away") or 0) +
-                           (last.get("shots_off_target_home") or 0) +
-                           (last.get("shots_off_target_away") or 0))
-            feat["shots_per_corner"] = round(
-                total_shots / max(c_total, 1), 4)
-
-            # Totais agregados
-            feat["saves_total"] = ((last.get("saves_home") or 0) +
-                                    (last.get("saves_away") or 0))
-            feat["shots_total"] = total_shots
-            feat["offsides_total"] = ((last.get("offsides_home") or 0) +
-                                       (last.get("offsides_away") or 0))
-            feat["cards_total"] = ((last.get("yellow_cards_home") or 0) +
-                                    (last.get("yellow_cards_away") or 0) +
-                                    (last.get("red_cards_home") or 0) +
-                                    (last.get("red_cards_away") or 0))
-            feat["goal_kicks_total"] = ((last.get("goal_kicks_home") or 0) +
-                                         (last.get("goal_kicks_away") or 0))
-
-            # Eficiência ofensiva: escanteios por tiro de meta
-            feat["corners_per_goal_kick"] = round(
-                c_total / max(feat["goal_kicks_total"], 1), 4)
-
-            # Placar do intervalo (para snapshots > 45 min)
-            if snap_min > 45:
-                feat["ht_score_home"] = pano.get("ht_score_home")
-                feat["ht_score_away"] = pano.get("ht_score_away")
-            else:
-                feat["ht_score_home"] = None
-                feat["ht_score_away"] = None
-
-            # ----------------------------------------------------------------
-            # Game state avançado
-            # ----------------------------------------------------------------
-            feat["is_home_losing"] = int(score_h < score_a)
-            feat["is_away_losing"] = int(score_a < score_h)
-            _is_losing = int(score_h != score_a)
-
-            # Pressão do time perdendo relativa ao total de ataques
-            _total_attacks = (last.get("attacks_home") or 0) + (last.get("attacks_away") or 0)
-            _total_dangerous = ((last.get("dangerous_attacks_home") or 0) +
-                                (last.get("dangerous_attacks_away") or 0))
-            if score_h < score_a:
-                _losing_attacks   = last.get("attacks_home") or 0
-                _losing_dangerous = last.get("dangerous_attacks_home") or 0
-            elif score_a < score_h:
-                _losing_attacks   = last.get("attacks_away") or 0
-                _losing_dangerous = last.get("dangerous_attacks_away") or 0
-            else:
-                _losing_attacks   = 0
-                _losing_dangerous = 0
-
-            feat["losing_team_attack_share"]    = round(_losing_attacks / max(_total_attacks, 1), 4)
-            feat["losing_team_dangerous_ratio"] = round(_losing_dangerous / max(_total_dangerous, 1), 4)
-
-            # Urgency: quanto mais tempo perdendo faltando + menos tempo → mais urgente
-            feat["urgency_index"]    = _is_losing * (90 - snap_min)
-            feat["urgency_weighted"] = round(_is_losing / max(90 - snap_min, 1), 4)
-
-            # ----------------------------------------------------------------
-            # Pressão ofensiva últimos 5 / 10 min (ataques e chutes)
-            # ----------------------------------------------------------------
-            _att_last5_h  = _last_n_minutes(until, snap_min, 5,  "attacks_home")
-            _att_last5_a  = _last_n_minutes(until, snap_min, 5,  "attacks_away")
-            _att_last10_h = _last_n_minutes(until, snap_min, 10, "attacks_home")
-            _att_last10_a = _last_n_minutes(until, snap_min, 10, "attacks_away")
-            _da_last5_h   = _last_n_minutes(until, snap_min, 5,  "dangerous_attacks_home")
-            _da_last5_a   = _last_n_minutes(until, snap_min, 5,  "dangerous_attacks_away")
-            _da_last10_h  = _last_n_minutes(until, snap_min, 10, "dangerous_attacks_home")
-            _da_last10_a  = _last_n_minutes(until, snap_min, 10, "dangerous_attacks_away")
-            _son_last5_h  = _last_n_minutes(until, snap_min, 5,  "shots_on_target_home")
-            _son_last5_a  = _last_n_minutes(until, snap_min, 5,  "shots_on_target_away")
-            _soff_last5_h = _last_n_minutes(until, snap_min, 5,  "shots_off_target_home")
-            _soff_last5_a = _last_n_minutes(until, snap_min, 5,  "shots_off_target_away")
-
-            feat["attacks_last_5min"]          = (_att_last5_h  or 0) + (_att_last5_a  or 0)
-            feat["attacks_last_10min"]         = (_att_last10_h or 0) + (_att_last10_a or 0)
-            feat["dangerous_attacks_last_5min"]  = (_da_last5_h  or 0) + (_da_last5_a  or 0)
-            feat["dangerous_attacks_last_10min"] = (_da_last10_h or 0) + (_da_last10_a or 0)
-            feat["shots_last_5min"] = ((_son_last5_h or 0) + (_son_last5_a or 0) +
-                                       (_soff_last5_h or 0) + (_soff_last5_a or 0))
-
-            # Pressure acceleration: ritmo atual (last 5 min) vs ritmo médio do jogo
-            _avg_att_rate = _total_attacks / max(snap_min, 1)
-            feat["pressure_acceleration"] = round(
-                (feat["attacks_last_5min"] / 5) / max(_avg_att_rate, 0.01), 4)
-
-            # Dominância por time (share de ataques e ataques perigosos)
-            feat["attack_share_home"]    = round((last.get("attacks_home") or 0) / max(_total_attacks, 1), 4)
-            feat["attack_share_away"]    = round((last.get("attacks_away") or 0) / max(_total_attacks, 1), 4)
-            feat["dangerous_share_home"] = round((last.get("dangerous_attacks_home") or 0) / max(_total_dangerous, 1), 4)
-            feat["dangerous_share_away"] = round((last.get("dangerous_attacks_away") or 0) / max(_total_dangerous, 1), 4)
-
-            # Momentum ratios: atividade recente / total acumulado
-            feat["corners_momentum_ratio"] = round(feat["corners_last_10min"] / max(c_total, 1), 4)
-            feat["attacks_momentum_ratio"] = round(feat["attacks_last_10min"] / max(_total_attacks, 1), 4)
-
-            # Qualidade de chute: chutes por ataque perigoso
-            feat["shots_per_dangerous_attack"] = round(
-                total_shots / max(_total_dangerous, 1), 4)
-
-            # ----------------------------------------------------------------
-            # Time since last corner / shot / dangerous attack (streaks)
-            # ----------------------------------------------------------------
-            def _time_since_last_event(df_until, col_home, col_away, current_min):
-                """Minutos desde o último evento que incrementou a contagem acumulada."""
-                if col_home not in df_until.columns:
-                    return None
-                total_s = df_until[col_home].fillna(0)
-                if col_away in df_until.columns:
-                    total_s = total_s + df_until[col_away].fillna(0)
-                diff = total_s.diff()
-                events = df_until[diff > 0]
-                if events.empty:
-                    return current_min  # nenhum evento ainda
-                last_ev_min = events.iloc[-1].get("minute")
-                if last_ev_min is None:
-                    return None
-                return int(current_min - last_ev_min)
-
-            feat["time_since_last_corner"] = _time_since_last_event(
-                until, "corners_home", "corners_away", snap_min)
-            feat["time_since_last_shot"] = _time_since_last_event(
-                until, "shots_on_target_home", "shots_on_target_away", snap_min)
-            feat["time_since_last_dangerous_attack"] = _time_since_last_event(
-                until, "dangerous_attacks_home", "dangerous_attacks_away", snap_min)
-
-            # ----------------------------------------------------------------
-            # Não-linearidade do tempo
-            # ----------------------------------------------------------------
-            feat["snap_minute_sq"] = snap_min ** 2
-            feat["snap_minute_sqrt"]  = round(snap_min ** 0.5, 4)
-            feat["snap_minute_log"]   = round(np.log(max(snap_min, 1)), 4)
-            feat["remaining_time_sq"] = (90 - snap_min) ** 2
-            feat["time_ratio"]        = round(snap_min / 90, 4)
-            feat["phase_of_game"]  = (0 if snap_min <= 30 else
-                                      1 if snap_min <= 60 else
-                                      2 if snap_min <= 75 else 3)
-            feat["is_last_15min"]      = int(snap_min >= 75)
-            feat["losing_in_last_15"]  = int(snap_min >= 75 and score_h != score_a)
-
-            # ----------------------------------------------------------------
-            # Taxas de escanteio por estado do placar
-            # ----------------------------------------------------------------
-            if score_h < score_a:           # home losing
-                _losing_corners  = c_home
-                _winning_corners = c_away
-            elif score_a < score_h:         # away losing
-                _losing_corners  = c_away
-                _winning_corners = c_home
-            else:                           # draw
-                _losing_corners  = 0
-                _winning_corners = 0
-
-            feat["losing_team_corners_rate"]  = round(_losing_corners  / max(snap_min, 1), 4)
-            feat["winning_team_corners_rate"] = round(_winning_corners / max(snap_min, 1), 4)
-
-            # Pressão perigosa do time perdendo por minuto
-            if score_h < score_a:
-                _losing_da = last.get("dangerous_attacks_home") or 0
-            elif score_a < score_h:
-                _losing_da = last.get("dangerous_attacks_away") or 0
-            else:
-                _losing_da = 0
-            feat["pressure_when_losing"] = round(_losing_da / max(snap_min, 1), 4)
-
-            # ----------------------------------------------------------------
-            # Qualidade da pressão e distribuição de campo
-            # ----------------------------------------------------------------
-            feat["pressure_ratio"]    = round(_total_dangerous / max(_total_attacks, 1), 4)
-            _da_h = last.get("dangerous_attacks_home") or 0
-            _da_a = last.get("dangerous_attacks_away") or 0
-            feat["field_tilt_proxy"]  = round(_da_h / max(_da_h + _da_a, 1), 4)
-
-            # ----------------------------------------------------------------
-            # Aceleração de escanteios: last_5 - prev_5 (janela anterior)
-            # ----------------------------------------------------------------
-            feat["acceleration_corners"] = round(
-                2 * feat["corners_last_5min"] - feat["corners_last_10min"], 4)
-
-            # ----------------------------------------------------------------
-            # Momentum score: soma ponderada de eventos nos últimos 15 min
-            # (corners peso 3, dangerous peso 2, attacks peso 1)
-            # ----------------------------------------------------------------
-            _c_last15  = (feat["corners_last_15_home"] or 0) + \
-                         (_last_n_minutes(until, snap_min, 15, "corners_away") or 0)
-            _da_last15 = (_last_n_minutes(until, snap_min, 15, "dangerous_attacks_home") or 0) + \
-                         (_last_n_minutes(until, snap_min, 15, "dangerous_attacks_away") or 0)
-            _att_last15 = (_last_n_minutes(until, snap_min, 15, "attacks_home") or 0) + \
-                          (_last_n_minutes(until, snap_min, 15, "attacks_away") or 0)
-            feat["momentum_score"] = round(3 * _c_last15 + 2 * _da_last15 + _att_last15, 4)
-
-            # ----------------------------------------------------------------
-            # Game regime: LOW / NORMAL / HIGH (0/1/2)
-            # Baseado em ritmo de escanteios + ataques perigosos + chutes
-            # ----------------------------------------------------------------
-            _c_rate   = feat["corners_rate_per_min"]
-            _da_rate  = feat["dangerous_attacks_rate"]
-            _sh_rate  = total_shots / max(snap_min, 1)
-            _regime_score = _c_rate * 10 + _da_rate + _sh_rate * 0.5
-            feat["game_regime"] = (0 if _regime_score < 0.8 else
-                                   1 if _regime_score < 1.8 else 2)
-
-            # ----------------------------------------------------------------
-            # Interações regime × features (aprende padrões condicionais)
-            # ----------------------------------------------------------------
-            _regime = feat["game_regime"]
-            feat["regime_x_corners_rate"] = round(
-                _regime * feat["corners_rate_per_min"], 4)
-            feat["regime_x_pressure_home"] = round(
-                _regime * feat.get("pressure_index_home", 0), 4)
-            feat["regime_x_dangerous_rate"] = round(
-                _regime * feat["dangerous_attacks_rate"], 4)
-
-            # Anomalia: regime vs corners reais
-            _exp_at_min_r = (
-                (_league_avg_early * snap_min / 90)
-                if _league_avg_early else c_total)
-            feat["is_high_regime_low_corners"] = int(
-                _regime == 2 and c_total < _exp_at_min_r * 0.5)
-            feat["is_low_regime_high_corners"] = int(
-                _regime == 0 and c_total > _exp_at_min_r * 1.5)
-
-            # ----------------------------------------------------------------
-            # Dominância ofensiva e assimetria
-            # ----------------------------------------------------------------
-            feat["dangerous_dominance"] = _da_h - _da_a   # + = home domina
-            feat["corner_dominance"]    = c_home - c_away  # equivale a corners_diff
-            feat["one_sided_game"]      = abs(c_home - c_away)
-
-            # ----------------------------------------------------------------
-            # Expected corners pelo minuto + resíduo + flags
-            # ----------------------------------------------------------------
-            _league_avg_v = league_avg_map.get(str(event_id)) if league_avg_map else None
-            _exp_by_min = (round(_league_avg_v * snap_min / 90, 4)
-                           if _league_avg_v is not None else None)
-            feat["expected_corners_by_minute"] = _exp_by_min
-            if _exp_by_min is not None:
-                _res = round(c_total - _exp_by_min, 4)
-                feat["residual_corners"]        = _res
-                feat["overperformance_flag"]    = int(_res >  1.5)
-                feat["underperformance_flag"]   = int(_res < -1.5)
-            else:
-                feat["residual_corners"]        = None
-                feat["overperformance_flag"]    = 0
-                feat["underperformance_flag"]   = 0
-
-            # ----------------------------------------------------------------
-            # Intensidade 1º vs 2º tempo (só snap > 45)
-            # ----------------------------------------------------------------
-            if snap_min > 45 and "first_half_corners" in feat:
-                _fh = feat.get("first_half_corners") or 0
-                _fh_rate  = _fh / 45
-                _sh_rate2 = feat.get("second_half_rate") or 0
-                feat["intensity_drop"]           = round(_fh_rate - _sh_rate2, 4)
-                feat["second_half_decay_factor"] = round(
-                    _sh_rate2 / max(_fh_rate, 0.01), 4)
-                _ff = feat.get("fatigue_factor") or 1.0
-                feat["tempo_adjusted_rate"] = round(feat["corners_rate_per_min"] * _ff, 4)
-            else:
-                feat["intensity_drop"]           = None
-                feat["second_half_decay_factor"] = None
-                feat["tempo_adjusted_rate"]      = None
-
-            # ----------------------------------------------------------------
-            # Novas features de pressão e ritmo
-            # ----------------------------------------------------------------
-
-            # pressure_diff: diferença bruta de ataques perigosos (home - away)
-            # (nota: dangerous_dominance já existe com o mesmo valor)
-            feat["pressure_diff"] = _da_h - _da_a
-
-            # pressure_dominance_ratio: assimetria lateral de pressão perigosa
-            feat["pressure_dominance_ratio"] = round(_da_h / (_da_a + 1), 4)
-
-            # rolling_pressure_5 / 10: taxa de ataques perigosos nos últimos 5/10 min
-            feat["rolling_pressure_5"]  = round(feat["dangerous_attacks_last_5min"]  / 5,  4)
-            feat["rolling_pressure_10"] = round(feat["dangerous_attacks_last_10min"] / 10, 4)
-
-            # da_pressure_acceleration: aceleração baseada em ataques perigosos
-            feat["da_pressure_acceleration"] = round(
-                feat["rolling_pressure_5"] - feat["rolling_pressure_10"], 4)
-
-            # losing_team_pressure_ratio: share perigoso do time perdendo
-            feat["losing_team_pressure_ratio"] = round(
-                _losing_da / (_total_dangerous + 1), 4)
-
-            # urgency: intensidade de reação × momento da partida
-            feat["urgency"] = round(
-                abs(score_h - score_a) * (snap_min / 90), 4)
-
-            # final_pressure: pressão recente relativa ao tempo restante
-            feat["final_pressure"] = round(
-                feat["dangerous_attacks_last_10min"] / (90 - snap_min + 1), 4)
-
-            # activity_spike: pico de atividade nos últimos 5 min
-            feat["activity_spike"] = (
-                feat["corners_last_5min"] +
-                feat["shots_last_5min"] +
-                feat["dangerous_attacks_last_5min"]
-            )
-
-            # corner_drought_pressure: pressão acumulada durante jejum de escanteios
-            _tslc = feat.get("time_since_last_corner") or 0
-            feat["corner_drought_pressure"] = round(_tslc * feat["pressure_ratio"], 4)
-
-            # corner_conversion: eficiência de converter pressão perigosa em escanteios
-            feat["corner_conversion"] = round(c_total / (_total_dangerous + 1), 4)
-
-            # wasted_pressure: ataques perigosos não convertidos em chutes
-            feat["wasted_pressure"] = max(_total_dangerous - total_shots, 0)
-
-            # is_high_pace / is_low_pace: ritmo atual vs média da liga
-            _league_rate = (_league_avg_v / 90) if _league_avg_v else None
-            if _league_rate:
-                feat["is_high_pace"] = int(feat["corners_rate_per_min"] > _league_rate)
-                feat["is_low_pace"]  = int(feat["corners_rate_per_min"] < _league_rate * 0.7)
-            else:
-                feat["is_high_pace"] = 0
-                feat["is_low_pace"]  = 0
-
-            # pace_shift: ritmo recente (last 10) vs ritmo do 1º tempo
-            if snap_min > 45 and feat.get("first_half_corners") is not None:
-                _fh_rate_for_shift = (feat.get("first_half_corners") or 0) / 45
-                feat["pace_shift"] = round(feat["corners_rate_last_10"] - _fh_rate_for_shift, 4)
-            else:
-                feat["pace_shift"] = 0
-
-            # ----------------------------------------------------------------
-            # Features adicionais de pressão / momentum / burst / expectativa
-            # ----------------------------------------------------------------
-
-            # Pressure index 5: qualidade da pressão nos últimos 5 min
-            _att_last5_total = feat["attacks_last_5min"]
-            _da_last5_total  = feat["dangerous_attacks_last_5min"]
-            feat["pressure_index_5"] = round(
-                _da_last5_total / (_att_last5_total + 1), 4)
-
-            # Aceleração de ataques e ataques perigosos (last 5 vs prev 5)
-            _att_last10_total = feat["attacks_last_10min"]
-            _da_last10_total  = feat["dangerous_attacks_last_10min"]
-            _att_prev5 = _att_last10_total - _att_last5_total
-            _da_prev5  = _da_last10_total - _da_last5_total
-            feat["acceleration_attacks"]    = round((_att_last5_total - _att_prev5) / 5, 4)
-            feat["acceleration_dangerous"]  = round((_da_last5_total - _da_prev5) / 5, 4)
-
-            # Corners por minuto recente (últimos 5 min)
-            feat["corners_per_minute_recent"] = round(feat["corners_last_5min"] / 5, 4)
-
-            # Time decay pressure: pressão recente decaindo com tempo desde último corner
-            _tslc2 = max(feat.get("time_since_last_corner") or 0, 0)
-            feat["time_decay_pressure"] = round(
-                feat["pressure_index_5"] * np.exp(-_tslc2 / 10), 4)
-
-            # Winning team slowdown: ataques do time vencendo (ritmo mais lento?)
-            if score_h > score_a:
-                feat["winning_team_slowdown"] = round(
-                    (last.get("attacks_home") or 0) / max(snap_min, 1), 4)
-            elif score_a > score_h:
-                feat["winning_team_slowdown"] = round(
-                    (last.get("attacks_away") or 0) / max(snap_min, 1), 4)
-            else:
-                feat["winning_team_slowdown"] = 0
-
-            # Dominância absoluta (magnitude da assimetria)
-            feat["dominance_abs"] = abs(
-                (last.get("attacks_home") or 0) - (last.get("attacks_away") or 0) +
-                2 * ((last.get("dangerous_attacks_home") or 0) -
-                     (last.get("dangerous_attacks_away") or 0)))
-
-            # Eficiência / conversão
-            feat["corners_to_dangerous_ratio"] = round(
-                c_total / max(_total_dangerous, 1), 4)
-            feat["dangerous_to_attacks_ratio"] = round(
-                _total_dangerous / max(_total_attacks, 1), 4)
-            _shots_on = ((last.get("shots_on_target_home") or 0) +
-                         (last.get("shots_on_target_away") or 0))
-            feat["shots_to_dangerous_ratio"] = round(
-                _shots_on / max(_total_dangerous, 1), 4)
-            feat["conversion_drop"] = round(
-                feat["corners_last_5min"] / (_da_last5_total + 1), 4)
-
-            # Padrões de burst
-            feat["corner_burst_flag"] = int(feat["corners_last_5min"] >= 3)
-            feat["sustained_pressure_flag"] = int(
-                _da_last5_total >= 8 and _att_last5_total >= 15)
-
-            # Expectativa dinâmica (últimos 5 min vs média da liga)
-            _lr_5 = (_league_avg_v / 90) if _league_avg_v else None
-            if _lr_5:
-                _exp_5min = _lr_5 * 5
-                feat["expected_corners_5min"]  = round(_exp_5min, 4)
-                feat["corners_vs_expected_5"]  = round(
-                    feat["corners_last_5min"] - _exp_5min, 4)
-            else:
-                feat["expected_corners_5min"]  = None
-                feat["corners_vs_expected_5"]  = None
-
-            _exp_so_far = (_league_avg_v * snap_min / 90) if _league_avg_v else None
-            feat["relative_pace"] = round(
-                c_total / max(_exp_so_far, 0.1), 4) if _exp_so_far else None
-
-            feat["pace_acceleration"] = round(
-                (feat["corners_last_5min"] / 5) -
-                (c_total / max(snap_min, 1)), 4)
-
-            # Contexto final de jogo
-            _time_frac = snap_min / 90
-            feat["late_game_pressure"] = round(
-                feat["pressure_index_5"] * _time_frac, 4)
-            feat["urgency_factor"] = round(
-                abs(score_h - score_a) * _time_frac, 4)
-            feat["draw_pressure"] = round(
-                feat["is_draw"] * _time_frac * _da_last5_total, 4)
-
-            # --- Features pré-jogo do panorama ---
-            # Odds pré-jogo
-            for col in ["corners_line", "corners_over_odds", "corners_under_odds",
-                        "asian_corners_line", "asian_corners_home_odds", "asian_corners_away_odds",
-                        "odds_home_win", "odds_draw", "odds_away_win",
-                        "goals_line", "goals_over_odds", "goals_under_odds",
-                        "btts_yes_odds", "btts_no_odds"]:
-                feat[col] = pano.get(col)
-
-            # Odds ao vivo (se disponíveis)
-            for col in ["live_corners_line", "live_corners_over_odds",
-                        "live_corners_under_odds"]:
-                feat[col] = pano.get(col)
-
-            # Divergência mercado vs expectativa histórica
-            _cl = feat.get("corners_line")
-            _me = feat.get("match_expected_corners")
-            if _cl is not None and _me is not None:
-                feat["line_diff_vs_expected"] = round(float(_cl) - float(_me), 4)
-            else:
-                feat["line_diff_vs_expected"] = None
-
-            # Stats adicionais do event/view
-            for col in ["throw_ins_home_total", "throw_ins_away_total",
-                        "tackles_home_total", "tackles_away_total"]:
-                feat[col] = pano.get(col)
-
-            # Days rest (do histórico dos times)
-            feat["days_rest_home"] = hist.get("days_rest_home")
-            feat["days_rest_away"] = hist.get("days_rest_away")
-
-            # --- Features históricas dos times ---
-            for col in hist.index:
-                if col != "event_id" and col.startswith("hist_"):
-                    feat[col] = hist.get(col)
-
-            # --- Features temporais ---
-            kickoff = pd.to_datetime(feat.get("kickoff_dt"), errors="coerce")
-            if pd.notna(kickoff):
-                feat["day_of_week"]  = kickoff.dayofweek    # 0=segunda, 6=domingo
-                feat["hour_of_day"]  = kickoff.hour
-                feat["month"]        = kickoff.month
-                feat["is_weekend"]   = int(kickoff.dayofweek >= 5)
-            else:
-                feat["day_of_week"]  = None
-                feat["hour_of_day"]  = None
-                feat["month"]        = None
-                feat["is_weekend"]   = None
-
-            # --- Target ---
-            feat["target_corners_total"] = pano.get("corners_total")
-            feat["target_corners_remaining"] = (
-                (pano.get("corners_total") or 0) -
-                ((last.get("corners_home") or 0) + (last.get("corners_away") or 0))
-            )
-            feat["target_more_corners"] = int((feat["target_corners_remaining"] or 0) > 0)
-
-            records.append(feat)
-
-    # --- Pós-processamento: features de momentum (deltas entre snapshots) ---
-    # Para cada jogo, calcula variações entre snapshots consecutivos.
-    # Minuto 15 fica sem deltas (sem snapshot anterior).
+                last["_ht_ch"] = 0
+                last["_ht_ca"] = 0
+        else:
+            last["_ht_ch"] = np.nan
+            last["_ht_ca"] = np.nan
+
+        # --- Time since last corner (vectorized) ---
+        _ct2 = until.copy()
+        _ct2["_total_c"] = _ct2["corners_home"].fillna(0) + _ct2["corners_away"].fillna(0)
+        _ct2["_diff_c"] = _ct2.groupby("event_id")["_total_c"].diff()
+        _corner_events = _ct2[_ct2["_diff_c"] > 0]
+        _last_corner_min = _corner_events.groupby("event_id")["minute"].last().reset_index(
+            name="_last_corner_minute")
+        last = last.merge(_last_corner_min, on="event_id", how="left")
+
+        # Time since last shot
+        _ct2["_total_s"] = _ct2.get("shots_on_target_home", pd.Series(0, index=_ct2.index)).fillna(0) + \
+                           _ct2.get("shots_on_target_away", pd.Series(0, index=_ct2.index)).fillna(0)
+        _ct2["_diff_s"] = _ct2.groupby("event_id")["_total_s"].diff()
+        _shot_events = _ct2[_ct2["_diff_s"] > 0]
+        _last_shot_min = _shot_events.groupby("event_id")["minute"].last().reset_index(
+            name="_last_shot_minute")
+        last = last.merge(_last_shot_min, on="event_id", how="left")
+
+        # Time since last dangerous attack
+        _ct2["_total_da"] = _ct2.get("dangerous_attacks_home", pd.Series(0, index=_ct2.index)).fillna(0) + \
+                            _ct2.get("dangerous_attacks_away", pd.Series(0, index=_ct2.index)).fillna(0)
+        _ct2["_diff_da"] = _ct2.groupby("event_id")["_total_da"].diff()
+        _da_events = _ct2[_ct2["_diff_da"] > 0]
+        _last_da_min = _da_events.groupby("event_id")["minute"].last().reset_index(
+            name="_last_da_minute")
+        last = last.merge(_last_da_min, on="event_id", how="left")
+
+        all_frames.append(last)
+
+    # ------------------------------------------------------------------
+    # 2. Concatenar todos os snapshots e computar features vetorialmente
+    # ------------------------------------------------------------------
+    df = pd.concat(all_frames, ignore_index=True)
+    SM = df["snap_minute"]
+
+    # Preencher NaN de stats com 0 para aritmética segura
+    for c in _STAT_COLS:
+        if c in df.columns:
+            df[c] = df[c].fillna(0)
+
+    # --- Colunas base ---
+    df["corners_home_so_far"] = df["corners_home"]
+    df["corners_away_so_far"] = df["corners_away"]
+    c_home = df["corners_home"].values
+    c_away = df["corners_away"].values
+    c_total = c_home + c_away
+    df["corners_total_so_far"] = c_total
+
+    df["corners_rate_per_min"] = np.round(c_total / np.maximum(SM, 1), 4)
+
+    # Posse média
+    for pc in _POSS_COLS:
+        avg_col = f"{pc}_avg_tmp"
+        target_col = f"{pc[:-len('_home') if pc.endswith('_home') else -len('_away')]}_avg" if False else pc.replace("possession_", "possession_") + "_avg"
+        # Simplify: possession_home -> possession_home_avg
+        target_col = pc + "_avg"
+        if avg_col in df.columns:
+            df[target_col] = df[avg_col].round(2)
+            df.drop(columns=[avg_col], inplace=True)
+        else:
+            df[target_col] = np.nan
+
+    # Ataques / chutes / totais
+    att_h = df.get("attacks_home", pd.Series(0, index=df.index)).fillna(0).values
+    att_a = df.get("attacks_away", pd.Series(0, index=df.index)).fillna(0).values
+    da_h = df.get("dangerous_attacks_home", pd.Series(0, index=df.index)).fillna(0).values
+    da_a = df.get("dangerous_attacks_away", pd.Series(0, index=df.index)).fillna(0).values
+    son_h = df.get("shots_on_target_home", pd.Series(0, index=df.index)).fillna(0).values
+    son_a = df.get("shots_on_target_away", pd.Series(0, index=df.index)).fillna(0).values
+    soff_h = df.get("shots_off_target_home", pd.Series(0, index=df.index)).fillna(0).values
+    soff_a = df.get("shots_off_target_away", pd.Series(0, index=df.index)).fillna(0).values
+    yc_h = df.get("yellow_cards_home", pd.Series(0, index=df.index)).fillna(0).values
+    yc_a = df.get("yellow_cards_away", pd.Series(0, index=df.index)).fillna(0).values
+    rc_h = df.get("red_cards_home", pd.Series(0, index=df.index)).fillna(0).values
+    rc_a = df.get("red_cards_away", pd.Series(0, index=df.index)).fillna(0).values
+    fouls_h = df.get("fouls_home", pd.Series(0, index=df.index)).fillna(0).values
+    fouls_a = df.get("fouls_away", pd.Series(0, index=df.index)).fillna(0).values
+    saves_h = df.get("saves_home", pd.Series(0, index=df.index)).fillna(0).values
+    saves_a = df.get("saves_away", pd.Series(0, index=df.index)).fillna(0).values
+    offs_h = df.get("offsides_home", pd.Series(0, index=df.index)).fillna(0).values
+    offs_a = df.get("offsides_away", pd.Series(0, index=df.index)).fillna(0).values
+    gk_h = df.get("goal_kicks_home", pd.Series(0, index=df.index)).fillna(0).values
+    gk_a = df.get("goal_kicks_away", pd.Series(0, index=df.index)).fillna(0).values
+    score_h = df.get("score_home", pd.Series(0, index=df.index)).fillna(0).values
+    score_a = df.get("score_away", pd.Series(0, index=df.index)).fillna(0).values
+
+    total_attacks = att_h + att_a
+    total_dangerous = da_h + da_a
+    total_shots = son_h + son_a + soff_h + soff_a
+    shots_on = son_h + son_a
+
+    snap_min_v = SM.values.astype(float)
+
+    # --- Contexto placar ---
+    df["score_diff"] = score_h - score_a
+    df["total_red_cards"] = rc_h + rc_a
+    df["red_card_diff"] = rc_h - rc_a
+
+    # --- Diferenças home - away ---
+    df["corners_diff"] = c_home - c_away
+    df["attacks_diff"] = att_h - att_a
+    df["dangerous_attacks_diff"] = da_h - da_a
+    df["shots_on_target_diff"] = son_h - son_a
+
+    # --- Taxas ---
+    df["dangerous_attacks_rate"] = np.round((da_h + da_a) / np.maximum(snap_min_v, 1), 4)
+    df["corners_per_attack_ratio"] = np.round(c_total / np.maximum(total_attacks, 1), 4)
+
+    # --- Windowed features ---
+    def _windowed(col, suffix):
+        """Valor current - valor no passado = incremento nos últimos N min."""
+        now_v = df.get(col, pd.Series(0, index=df.index)).fillna(0).values
+        past_col = f"{col}{suffix}"
+        past_v = df.get(past_col, pd.Series(np.nan, index=df.index)).fillna(np.nan).values
+        result = np.where(np.isnan(past_v), np.nan, now_v - past_v)
+        return result
+
+    # Corners last 5/10/15
+    cl5h = _windowed("corners_home", "_p5")
+    cl5a = _windowed("corners_away", "_p5")
+    cl10h = _windowed("corners_home", "_p10")
+    cl10a = _windowed("corners_away", "_p10")
+    cl15h = _windowed("corners_home", "_p15")
+    cl15a = _windowed("corners_away", "_p15")
+
+    corners_last_5 = np.nan_to_num(cl5h, 0) + np.nan_to_num(cl5a, 0)
+    corners_last_10 = np.nan_to_num(cl10h, 0) + np.nan_to_num(cl10a, 0)
+    corners_last_15 = np.nan_to_num(cl15h, 0) + np.nan_to_num(cl15a, 0)
+
+    df["corners_last_5min"] = corners_last_5
+    df["corners_last_10min"] = corners_last_10
+    df["corners_acceleration_5_10"] = corners_last_5 - corners_last_10
+    df["corners_rate_last_5"] = np.round(corners_last_5 / 5.0, 4)
+    df["corners_rate_last_10"] = np.round(corners_last_10 / 10.0, 4)
+
+    df["corners_last_15_home"] = np.where(np.isnan(cl15h), None, cl15h)
+    df["corners_last_15_away"] = np.where(np.isnan(cl15a), None, cl15a)
+
+    df["home_corners_last_5"] = np.where(np.isnan(cl5h), None, cl5h)
+    df["away_corners_last_5"] = np.where(np.isnan(cl5a), None, cl5a)
+    df["home_corners_last_10"] = np.where(np.isnan(cl10h), None, cl10h)
+    df["away_corners_last_10"] = np.where(np.isnan(cl10a), None, cl10a)
+
+    # Attacks, dangerous attacks, shots last 5/10
+    att_l5h = np.nan_to_num(_windowed("attacks_home", "_p5"), 0)
+    att_l5a = np.nan_to_num(_windowed("attacks_away", "_p5"), 0)
+    att_l10h = np.nan_to_num(_windowed("attacks_home", "_p10"), 0)
+    att_l10a = np.nan_to_num(_windowed("attacks_away", "_p10"), 0)
+    da_l5h = np.nan_to_num(_windowed("dangerous_attacks_home", "_p5"), 0)
+    da_l5a = np.nan_to_num(_windowed("dangerous_attacks_away", "_p5"), 0)
+    da_l10h = np.nan_to_num(_windowed("dangerous_attacks_home", "_p10"), 0)
+    da_l10a = np.nan_to_num(_windowed("dangerous_attacks_away", "_p10"), 0)
+    son_l5h = np.nan_to_num(_windowed("shots_on_target_home", "_p5"), 0)
+    son_l5a = np.nan_to_num(_windowed("shots_on_target_away", "_p5"), 0)
+    soff_l5h = np.nan_to_num(_windowed("shots_off_target_home", "_p5"), 0)
+    soff_l5a = np.nan_to_num(_windowed("shots_off_target_away", "_p5"), 0)
+
+    att_last5 = att_l5h + att_l5a
+    att_last10 = att_l10h + att_l10a
+    da_last5 = da_l5h + da_l5a
+    da_last10 = da_l10h + da_l10a
+    shots_last5 = son_l5h + son_l5a + soff_l5h + soff_l5a
+
+    df["attacks_last_5min"] = att_last5
+    df["attacks_last_10min"] = att_last10
+    df["dangerous_attacks_last_5min"] = da_last5
+    df["dangerous_attacks_last_10min"] = da_last10
+    df["shots_last_5min"] = shots_last5
+
+    # 15 min windows for momentum score
+    att_l15h = np.nan_to_num(_windowed("attacks_home", "_p15"), 0)
+    att_l15a = np.nan_to_num(_windowed("attacks_away", "_p15"), 0)
+    da_l15h = np.nan_to_num(_windowed("dangerous_attacks_home", "_p15"), 0)
+    da_l15a = np.nan_to_num(_windowed("dangerous_attacks_away", "_p15"), 0)
+
+    # --- Estado do jogo ---
+    is_draw = (score_h == score_a).astype(int)
+    df["is_draw"] = is_draw
+    is_home_winning = score_h > score_a
+    is_away_winning = score_a > score_h
+
+    # Leading/losing team pressure (corners last 10)
+    h10 = np.nan_to_num(cl10h, 0)
+    a10 = np.nan_to_num(cl10a, 0)
+    df["leading_team_pressure"] = np.where(is_home_winning, h10,
+                                   np.where(is_away_winning, a10, 0))
+    df["losing_team_pressure"] = np.where(is_home_winning, a10,
+                                  np.where(is_away_winning, h10, 0))
+
+    # Tempo restante
+    df["time_remaining"] = 90 - snap_min_v
+    df["total_time_remaining"] = 90 - snap_min_v + 3
+
+    # Proporção e taxa por time
+    c_total_safe = np.maximum(c_total, 1)
+    df["home_corner_share"] = np.round(c_home / c_total_safe, 4)
+    df["away_corner_share"] = np.round(c_away / c_total_safe, 4)
+    df["home_corners_rate"] = np.round(c_home / np.maximum(snap_min_v, 1), 4)
+    df["away_corners_rate"] = np.round(c_away / np.maximum(snap_min_v, 1), 4)
+
+    # --- Merge com histórico ---
+    hist_cols = [c for c in df_hist.columns if c.startswith("hist_") or c in
+                 ["event_id", "days_rest_home", "days_rest_away"]]
+    if "event_id" not in hist_cols:
+        hist_cols = ["event_id"] + hist_cols
+    df = df.merge(df_hist[hist_cols], on="event_id", how="left")
+
+    # Expectativa combinada (hist)
+    haf = df.get("hist_home_corners_scored_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    haa = df.get("hist_home_corners_conceded_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    aaf = df.get("hist_away_corners_scored_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    aaa = df.get("hist_away_corners_conceded_avg", pd.Series(np.nan, index=df.index)).astype(float)
+
+    home_exp = (haf + aaa) / 2
+    away_exp = (aaf + haa) / 2
+    match_exp = home_exp + away_exp
+    # NaN where any component was NaN
+    home_exp = np.where(haf.isna() | aaa.isna(), np.nan, home_exp)
+    away_exp = np.where(aaf.isna() | haa.isna(), np.nan, away_exp)
+    match_exp = np.where(np.isnan(home_exp) | np.isnan(away_exp), np.nan, match_exp)
+
+    df["home_expected_corners"] = np.round(home_exp, 4)
+    df["away_expected_corners"] = np.round(away_exp, 4)
+    df["match_expected_corners"] = np.round(match_exp, 4)
+
+    # Desvio do ritmo esperado
+    exp_at_min = match_exp * snap_min_v / 90
+    df["corners_vs_expected"] = np.where(
+        np.isnan(match_exp) | (match_exp <= 0), np.nan,
+        np.round(c_total - exp_at_min, 4))
+    df["pace_ratio"] = np.where(
+        np.isnan(match_exp) | (match_exp <= 0), np.nan,
+        np.round(c_total / np.maximum(exp_at_min, 0.1), 4))
+
+    # --- Sinal precoce ---
+    hist_combo_avg = (haf + aaf) / 2
+    hist_combo_avg = np.where(haf.isna() | aaf.isna(), np.nan, hist_combo_avg)
+    df["hist_team_combo_avg"] = np.round(hist_combo_avg, 4)
+
+    # League avg map
+    df["_league_avg"] = df["event_id"].astype(str).map(league_avg_map or {})
+    df["_league_std"] = df["event_id"].astype(str).map(league_std_map or {})
+    league_avg_v = df["_league_avg"].values.astype(float)
+    league_std_v = df["_league_std"].values.astype(float)
+
+    df["league_avg_corners"] = df["_league_avg"]
+    df["league_std_corners"] = df["_league_std"]
+
+    df["hist_vs_league"] = np.where(
+        np.isnan(hist_combo_avg) | np.isnan(league_avg_v), np.nan,
+        np.round(hist_combo_avg - league_avg_v / 2, 4))
+
+    hist_def = (haa + aaa) / 2
+    hist_def = np.where(haa.isna() | aaa.isna(), np.nan, hist_def)
+    df["hist_defensive_strength"] = np.round(hist_def, 4)
+
+    df["no_corner_yet"] = (c_total == 0).astype(int)
+    df["early_corner_surge"] = np.round(c_total / np.maximum(snap_min_v / 15, 1), 4)
+
+    # First corner speed
+    _fcm = df.get("_first_corner_min", pd.Series(np.nan, index=df.index)).values.astype(float)
+    df["first_corner_speed"] = np.where(
+        np.isnan(_fcm) | (_fcm <= 0), 0,
+        np.round(1.0 / np.maximum(_fcm, 1), 4))
+
+    # hist_actual_rate_ratio
+    exp_rate_pm = match_exp / 90
+    actual_rate = c_total / np.maximum(snap_min_v, 1)
+    df["hist_actual_rate_ratio"] = np.where(
+        np.isnan(match_exp) | (match_exp <= 0), np.nan,
+        np.round(actual_rate / np.maximum(exp_rate_pm, 0.01), 4))
+
+    # hist_combined_dangerous
+    hist_da_h = df.get("hist_home_dangerous_attacks_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    hist_da_a = df.get("hist_away_dangerous_attacks_avg", pd.Series(np.nan, index=df.index)).astype(float)
+    hist_da_combo = (hist_da_h + hist_da_a) / 2
+    df["hist_combined_dangerous"] = np.where(
+        hist_da_h.isna() | hist_da_a.isna(), np.nan,
+        np.round(hist_da_combo, 4))
+
+    # --- Liga: z-score ---
+    exp_at_min_lg = league_avg_v * snap_min_v / 90
+    df["z_score_corners"] = np.where(
+        np.isnan(league_avg_v) | np.isnan(league_std_v) | (league_std_v <= 0), np.nan,
+        np.round((c_total - exp_at_min_lg) / league_std_v, 4))
+
+    # Team style
+    half_league = league_avg_v / 2
+    df["team_style_home"] = np.where(
+        np.isnan(league_avg_v) | haf.isna(), np.nan,
+        np.round(haf.values - half_league, 4))
+    df["team_style_away"] = np.where(
+        np.isnan(league_avg_v) | aaf.isna(), np.nan,
+        np.round(aaf.values - half_league, 4))
+
+    # Intensity index
+    league_rate = league_avg_v / 90
+    df["intensity_index"] = np.where(
+        np.isnan(league_avg_v) | (league_avg_v <= 0), np.nan,
+        np.round(df["corners_rate_last_10"].values / np.maximum(league_rate, 0.01), 4))
+
+    # Late game boost
+    df["late_game_boost"] = np.round(corners_last_10 * (snap_min_v / 90), 4)
+
+    # Pressure index per team (last 10)
+    df["pressure_index_home"] = np.round(h10 / np.maximum(a10, 0.5), 4)
+    df["pressure_index_away"] = np.round(a10 / np.maximum(h10, 0.5), 4)
+
+    # Game state
+    df["game_state_factor"] = np.round((score_h - score_a) * snap_min_v, 4)
+    df["comeback_pressure"] = ((snap_min_v > 60) & (score_h != score_a)).astype(int)
+    df["dominance_index"] = np.round(np.abs(df["home_corner_share"].values - 0.5), 4)
+    df["volatility_index"] = np.round(np.abs(
+        df["corners_rate_last_5"].values - df["corners_rate_last_10"].values), 4)
+    df["momentum_shift"] = np.round(corners_last_5 - corners_last_10 / 2, 4)
+
+    # Remaining projections
+    total_time_rem = df["total_time_remaining"].values
+    df["expected_remaining_corners"] = np.round(
+        df["corners_rate_per_min"].values * total_time_rem, 4)
+    df["adjusted_expected_remaining"] = np.round(
+        df["corners_rate_last_10"].values * total_time_rem, 4)
+
+    # --- 1st vs 2nd half analysis ---
+    ht_ch = df["_ht_ch"].fillna(0).values
+    ht_ca = df["_ht_ca"].fillna(0).values
+    first_half = ht_ch + ht_ca
+    second_half_so_far = c_total - first_half
+    mins_2nd = np.maximum(snap_min_v - 45, 1)
+    second_half_rate = second_half_so_far / mins_2nd
+    first_half_rate = first_half / 45
+
+    is_2nd_half = snap_min_v > 45
+    df["first_half_corners"] = np.where(is_2nd_half, first_half, np.nan)
+    df["second_half_corners_so_far"] = np.where(is_2nd_half, second_half_so_far, np.nan)
+    df["second_half_rate"] = np.where(is_2nd_half, np.round(second_half_rate, 4), np.nan)
+    df["delta_rate_halves"] = np.where(is_2nd_half,
+        np.round(second_half_rate - first_half_rate, 4), np.nan)
+    df["fatigue_factor"] = np.where(
+        is_2nd_half & (first_half > 0),
+        np.round(df["corners_rate_last_10"].values / np.maximum(first_half_rate, 0.01), 4),
+        np.nan)
+
+    # --- Additional features ---
+    poss_h = df.get("possession_home_avg", pd.Series(np.nan, index=df.index)).values.astype(float)
+    poss_a = df.get("possession_away_avg", pd.Series(np.nan, index=df.index)).values.astype(float)
+    df["possession_diff"] = np.where(np.isnan(poss_h) | np.isnan(poss_a), np.nan, poss_h - poss_a)
+    df["fouls_diff"] = fouls_h - fouls_a
+    df["fouls_total"] = fouls_h + fouls_a
+    df["corners_per_dangerous_attack"] = np.round(c_total / np.maximum(total_dangerous, 1), 4)
+    df["shots_per_corner"] = np.round(total_shots / np.maximum(c_total, 1), 4)
+
+    # Totals
+    df["saves_total"] = saves_h + saves_a
+    df["shots_total"] = total_shots
+    df["offsides_total"] = offs_h + offs_a
+    df["cards_total"] = yc_h + yc_a + rc_h + rc_a
+    df["goal_kicks_total"] = gk_h + gk_a
+    df["corners_per_goal_kick"] = np.round(c_total / np.maximum(gk_h + gk_a, 1), 4)
+
+    # --- Merge panorama data (pre-game odds, HT score, targets) ---
+    pano_cols = ["event_id", "corners_total", "ht_score_home", "ht_score_away",
+                 "corners_line", "corners_over_odds", "corners_under_odds",
+                 "asian_corners_line", "asian_corners_home_odds", "asian_corners_away_odds",
+                 "odds_home_win", "odds_draw", "odds_away_win",
+                 "goals_line", "goals_over_odds", "goals_under_odds",
+                 "btts_yes_odds", "btts_no_odds",
+                 "live_corners_line", "live_corners_over_odds", "live_corners_under_odds",
+                 "throw_ins_home_total", "throw_ins_away_total",
+                 "tackles_home_total", "tackles_away_total"]
+    pano_cols = [c for c in pano_cols if c in df_pano.columns]
+    df = df.merge(df_pano[pano_cols].drop_duplicates("event_id"), on="event_id", how="left")
+
+    # HT score only for snap > 45
+    if "ht_score_home" in df.columns:
+        df["ht_score_home"] = np.where(is_2nd_half, df["ht_score_home"], np.nan)
+        df["ht_score_away"] = np.where(is_2nd_half, df["ht_score_away"], np.nan)
+
+    # --- Game state avançado ---
+    is_losing = (score_h != score_a).astype(int)
+    df["is_home_losing"] = (score_h < score_a).astype(int)
+    df["is_away_losing"] = (score_a < score_h).astype(int)
+
+    # Losing team stats
+    losing_attacks = np.where(score_h < score_a, att_h,
+                      np.where(score_a < score_h, att_a, 0))
+    losing_dangerous = np.where(score_h < score_a, da_h,
+                        np.where(score_a < score_h, da_a, 0))
+    losing_da = losing_dangerous  # alias
+
+    df["losing_team_attack_share"] = np.round(losing_attacks / np.maximum(total_attacks, 1), 4)
+    df["losing_team_dangerous_ratio"] = np.round(losing_dangerous / np.maximum(total_dangerous, 1), 4)
+    df["urgency_index"] = is_losing * (90 - snap_min_v)
+    df["urgency_weighted"] = np.round(is_losing / np.maximum(90 - snap_min_v, 1), 4)
+
+    # Pressure acceleration
+    avg_att_rate = total_attacks / np.maximum(snap_min_v, 1)
+    df["pressure_acceleration"] = np.round(
+        (att_last5 / 5) / np.maximum(avg_att_rate, 0.01), 4)
+
+    # Shares
+    df["attack_share_home"] = np.round(att_h / np.maximum(total_attacks, 1), 4)
+    df["attack_share_away"] = np.round(att_a / np.maximum(total_attacks, 1), 4)
+    df["dangerous_share_home"] = np.round(da_h / np.maximum(total_dangerous, 1), 4)
+    df["dangerous_share_away"] = np.round(da_a / np.maximum(total_dangerous, 1), 4)
+
+    # Momentum ratios
+    df["corners_momentum_ratio"] = np.round(corners_last_10 / np.maximum(c_total, 1), 4)
+    df["attacks_momentum_ratio"] = np.round(att_last10 / np.maximum(total_attacks, 1), 4)
+    df["shots_per_dangerous_attack"] = np.round(total_shots / np.maximum(total_dangerous, 1), 4)
+
+    # --- Time since last events ---
+    _lcm = df.get("_last_corner_minute", pd.Series(np.nan, index=df.index)).values.astype(float)
+    df["time_since_last_corner"] = np.where(
+        np.isnan(_lcm), snap_min_v,  # nenhum corner → tempo = snap_min
+        snap_min_v - _lcm)
+    _lsm = df.get("_last_shot_minute", pd.Series(np.nan, index=df.index)).values.astype(float)
+    df["time_since_last_shot"] = np.where(
+        np.isnan(_lsm), snap_min_v, snap_min_v - _lsm)
+    _ldm = df.get("_last_da_minute", pd.Series(np.nan, index=df.index)).values.astype(float)
+    df["time_since_last_dangerous_attack"] = np.where(
+        np.isnan(_ldm), snap_min_v, snap_min_v - _ldm)
+
+    # --- Non-linear time ---
+    df["snap_minute_sq"] = snap_min_v ** 2
+    df["snap_minute_sqrt"] = np.round(np.sqrt(snap_min_v), 4)
+    df["snap_minute_log"] = np.round(np.log(np.maximum(snap_min_v, 1)), 4)
+    df["remaining_time_sq"] = (90 - snap_min_v) ** 2
+    df["time_ratio"] = np.round(snap_min_v / 90, 4)
+    df["phase_of_game"] = np.where(snap_min_v <= 30, 0,
+                           np.where(snap_min_v <= 60, 1,
+                           np.where(snap_min_v <= 75, 2, 3)))
+    df["is_last_15min"] = (snap_min_v >= 75).astype(int)
+    df["losing_in_last_15"] = ((snap_min_v >= 75) & (score_h != score_a)).astype(int)
+
+    # --- Corner rates by score state ---
+    losing_corners = np.where(score_h < score_a, c_home,
+                      np.where(score_a < score_h, c_away, 0.0))
+    winning_corners = np.where(score_h < score_a, c_away,
+                       np.where(score_a < score_h, c_home, 0.0))
+    df["losing_team_corners_rate"] = np.round(losing_corners / np.maximum(snap_min_v, 1), 4)
+    df["winning_team_corners_rate"] = np.round(winning_corners / np.maximum(snap_min_v, 1), 4)
+    df["pressure_when_losing"] = np.round(losing_da / np.maximum(snap_min_v, 1), 4)
+
+    # --- Pressure quality ---
+    pressure_ratio = total_dangerous / np.maximum(total_attacks, 1)
+    df["pressure_ratio"] = np.round(pressure_ratio, 4)
+    df["field_tilt_proxy"] = np.round(da_h / np.maximum(da_h + da_a, 1), 4)
+
+    # Acceleration corners
+    df["acceleration_corners"] = np.round(2 * corners_last_5 - corners_last_10, 4)
+
+    # Momentum score
+    c_last15 = corners_last_15
+    da_last15 = np.nan_to_num(da_l15h, 0) + np.nan_to_num(da_l15a, 0)
+    att_last15 = np.nan_to_num(att_l15h, 0) + np.nan_to_num(att_l15a, 0)
+    df["momentum_score"] = np.round(3 * c_last15 + 2 * da_last15 + att_last15, 4)
+
+    # --- Game regime ---
+    c_rate = df["corners_rate_per_min"].values
+    da_rate = df["dangerous_attacks_rate"].values
+    sh_rate = total_shots / np.maximum(snap_min_v, 1)
+    regime_score = c_rate * 10 + da_rate + sh_rate * 0.5
+    game_regime = np.where(regime_score < 0.8, 0, np.where(regime_score < 1.8, 1, 2))
+    df["game_regime"] = game_regime
+
+    # --- Regime interactions ---
+    df["regime_x_corners_rate"] = np.round(game_regime * c_rate, 4)
+    df["regime_x_pressure_home"] = np.round(
+        game_regime * df["pressure_index_home"].values, 4)
+    df["regime_x_dangerous_rate"] = np.round(game_regime * da_rate, 4)
+
+    exp_at_min_r = np.where(np.isnan(league_avg_v), c_total, league_avg_v * snap_min_v / 90)
+    df["is_high_regime_low_corners"] = (
+        (game_regime == 2) & (c_total < exp_at_min_r * 0.5)).astype(int)
+    df["is_low_regime_high_corners"] = (
+        (game_regime == 0) & (c_total > exp_at_min_r * 1.5)).astype(int)
+
+    # --- Dominância ofensiva ---
+    df["dangerous_dominance"] = da_h - da_a
+    df["corner_dominance"] = c_home - c_away
+    df["one_sided_game"] = np.abs(c_home - c_away)
+
+    # --- Expected corners by minute + residual ---
+    exp_by_min = np.where(np.isnan(league_avg_v), np.nan,
+                          np.round(league_avg_v * snap_min_v / 90, 4))
+    df["expected_corners_by_minute"] = exp_by_min
+    residual = np.where(np.isnan(exp_by_min), np.nan, np.round(c_total - exp_by_min, 4))
+    df["residual_corners"] = residual
+    df["overperformance_flag"] = np.where(np.isnan(residual), 0, (residual > 1.5).astype(int))
+    df["underperformance_flag"] = np.where(np.isnan(residual), 0, (residual < -1.5).astype(int))
+
+    # --- Intensity drop (2nd half) ---
+    fh_rate = first_half_rate
+    sh_rate2 = second_half_rate
+    df["intensity_drop"] = np.where(is_2nd_half,
+        np.round(fh_rate - sh_rate2, 4), np.nan)
+    df["second_half_decay_factor"] = np.where(is_2nd_half,
+        np.round(sh_rate2 / np.maximum(fh_rate, 0.01), 4), np.nan)
+    fatigue = df["fatigue_factor"].values.copy()
+    fatigue_safe = np.where(np.isnan(fatigue), 1.0, fatigue)
+    df["tempo_adjusted_rate"] = np.where(is_2nd_half,
+        np.round(c_rate * fatigue_safe, 4), np.nan)
+
+    # --- Pressure features ---
+    df["pressure_diff"] = da_h - da_a
+    df["pressure_dominance_ratio"] = np.round(da_h / (da_a + 1), 4)
+    df["rolling_pressure_5"] = np.round(da_last5 / 5, 4)
+    df["rolling_pressure_10"] = np.round(da_last10 / 10, 4)
+    df["da_pressure_acceleration"] = np.round(
+        df["rolling_pressure_5"].values - df["rolling_pressure_10"].values, 4)
+    df["losing_team_pressure_ratio"] = np.round(losing_da / (total_dangerous + 1), 4)
+    df["urgency"] = np.round(np.abs(score_h - score_a) * (snap_min_v / 90), 4)
+    df["final_pressure"] = np.round(da_last10 / (90 - snap_min_v + 1), 4)
+    df["activity_spike"] = corners_last_5 + shots_last5 + da_last5
+
+    # Corner drought
+    tslc = df["time_since_last_corner"].values
+    df["corner_drought_pressure"] = np.round(tslc * pressure_ratio, 4)
+    df["corner_conversion"] = np.round(c_total / (total_dangerous + 1), 4)
+    df["wasted_pressure"] = np.maximum(total_dangerous - total_shots, 0)
+
+    # Pace flags
+    league_rate_v = league_avg_v / 90
+    df["is_high_pace"] = np.where(np.isnan(league_rate_v), 0,
+        (c_rate > league_rate_v).astype(int))
+    df["is_low_pace"] = np.where(np.isnan(league_rate_v), 0,
+        (c_rate < league_rate_v * 0.7).astype(int))
+
+    # Pace shift
+    fh_corners_v = df.get("first_half_corners", pd.Series(np.nan, index=df.index)).values.astype(float)
+    fh_rate_shift = np.where(np.isnan(fh_corners_v), 0, fh_corners_v / 45)
+    df["pace_shift"] = np.where(
+        is_2nd_half & ~np.isnan(fh_corners_v),
+        np.round(df["corners_rate_last_10"].values - fh_rate_shift, 4), 0)
+
+    # --- Pressure / momentum / burst ---
+    df["pressure_index_5"] = np.round(da_last5 / (att_last5 + 1), 4)
+    att_prev5 = att_last10 - att_last5
+    da_prev5 = da_last10 - da_last5
+    df["acceleration_attacks"] = np.round((att_last5 - att_prev5) / 5, 4)
+    df["acceleration_dangerous"] = np.round((da_last5 - da_prev5) / 5, 4)
+    df["corners_per_minute_recent"] = np.round(corners_last_5 / 5, 4)
+
+    # Time decay pressure
+    tslc_safe = np.maximum(tslc, 0)
+    df["time_decay_pressure"] = np.round(
+        df["pressure_index_5"].values * np.exp(-tslc_safe / 10), 4)
+
+    # Winning team slowdown
+    df["winning_team_slowdown"] = np.where(
+        is_home_winning, np.round(att_h / np.maximum(snap_min_v, 1), 4),
+        np.where(is_away_winning, np.round(att_a / np.maximum(snap_min_v, 1), 4), 0))
+
+    # Dominance abs
+    df["dominance_abs"] = np.abs(
+        att_h - att_a + 2 * (da_h - da_a))
+
+    # Efficiency
+    df["corners_to_dangerous_ratio"] = np.round(c_total / np.maximum(total_dangerous, 1), 4)
+    df["dangerous_to_attacks_ratio"] = np.round(total_dangerous / np.maximum(total_attacks, 1), 4)
+    df["shots_to_dangerous_ratio"] = np.round(shots_on / np.maximum(total_dangerous, 1), 4)
+    df["conversion_drop"] = np.round(corners_last_5 / (da_last5 + 1), 4)
+
+    # Burst flags
+    df["corner_burst_flag"] = (corners_last_5 >= 3).astype(int)
+    df["sustained_pressure_flag"] = ((da_last5 >= 8) & (att_last5 >= 15)).astype(int)
+
+    # Expected corners 5min
+    lr5 = league_avg_v / 90
+    exp_5min = lr5 * 5
+    df["expected_corners_5min"] = np.where(np.isnan(lr5), np.nan, np.round(exp_5min, 4))
+    df["corners_vs_expected_5"] = np.where(np.isnan(lr5), np.nan,
+        np.round(corners_last_5 - exp_5min, 4))
+
+    exp_so_far = league_avg_v * snap_min_v / 90
+    df["relative_pace"] = np.where(np.isnan(exp_so_far), np.nan,
+        np.round(c_total / np.maximum(exp_so_far, 0.1), 4))
+
+    df["pace_acceleration"] = np.round(
+        (corners_last_5 / 5) - (c_total / np.maximum(snap_min_v, 1)), 4)
+
+    # Late game context
+    time_frac = snap_min_v / 90
+    df["late_game_pressure"] = np.round(df["pressure_index_5"].values * time_frac, 4)
+    df["urgency_factor"] = np.round(np.abs(score_h - score_a) * time_frac, 4)
+    df["draw_pressure"] = np.round(is_draw * time_frac * da_last5, 4)
+
+    # --- Divergência mercado vs expectativa ---
+    cl_v = df.get("corners_line", pd.Series(np.nan, index=df.index)).astype(float).values
+    me_v = df["match_expected_corners"].values.astype(float)
+    df["line_diff_vs_expected"] = np.where(
+        np.isnan(cl_v) | np.isnan(me_v), np.nan,
+        np.round(cl_v - me_v, 4))
+
+    # --- Features temporais ---
+    kickoff = pd.to_datetime(df.get("kickoff_dt"), errors="coerce")
+    df["day_of_week"] = kickoff.dt.dayofweek
+    df["hour_of_day"] = kickoff.dt.hour
+    df["month"] = kickoff.dt.month
+    df["is_weekend"] = (kickoff.dt.dayofweek >= 5).astype(int)
+
+    # --- Targets ---
+    ct_final = df.get("corners_total", pd.Series(np.nan, index=df.index)).values
+    df["target_corners_total"] = ct_final
+    df["target_corners_remaining"] = np.where(
+        np.isnan(ct_final), np.nan, ct_final - c_total)
+    df["target_more_corners"] = np.where(
+        np.isnan(ct_final), np.nan,
+        ((ct_final - c_total) > 0).astype(int))
+
+    # ------------------------------------------------------------------
+    # 3. Momentum deltas (entre snapshots consecutivos do mesmo jogo)
+    # ------------------------------------------------------------------
     MOMENTUM_COLS = [
         "corners_total_so_far", "corners_home_so_far", "corners_away_so_far",
         "corners_rate_per_min", "dangerous_attacks_home", "dangerous_attacks_away",
@@ -1114,55 +977,22 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
         "shots_on_target_home", "shots_on_target_away",
         "possession_home_avg",
     ]
+    MOMENTUM_COLS = [c for c in MOMENTUM_COLS if c in df.columns]
+    df = df.sort_values(["event_id", "snap_minute"]).reset_index(drop=True)
+    for col in MOMENTUM_COLS:
+        df[f"delta_{col}"] = df.groupby("event_id")[col].diff().round(4)
 
-    # Agrupa records por event_id para calcular deltas
-    from collections import defaultdict
-    event_records: dict[str, list[int]] = defaultdict(list)
-    for i, rec in enumerate(records):
-        event_records[rec["event_id"]].append(i)
+    # ------------------------------------------------------------------
+    # 4. Limpeza: remover colunas temporárias
+    # ------------------------------------------------------------------
+    _tmp_cols = [c for c in df.columns if c.startswith("_") or c.endswith(("_p5", "_p10", "_p15"))]
+    df.drop(columns=_tmp_cols, inplace=True, errors="ignore")
 
-    for eid, indices in event_records.items():
-        # Ordena por snap_minute
-        indices_sorted = sorted(indices, key=lambda i: records[i]["snap_minute"])
-        for j in range(len(indices_sorted)):
-            idx = indices_sorted[j]
-            if j == 0:
-                # Primeiro snapshot (min 15): sem deltas
-                for col in MOMENTUM_COLS:
-                    records[idx][f"delta_{col}"] = None
-            else:
-                prev_idx = indices_sorted[j - 1]
-                for col in MOMENTUM_COLS:
-                    curr_val = records[idx].get(col) or 0
-                    prev_val = records[prev_idx].get(col) or 0
-                    records[idx][f"delta_{col}"] = round(curr_val - prev_val, 4)
-
-    return pd.DataFrame(records)
-
-
-def _mean_col(df, col):
-    if col not in df.columns:
-        return None
-    vals = df[col].dropna()
-    return round(vals.mean(), 2) if len(vals) > 0 else None
-
-
-def _diff(row, col_a, col_b):
-    a = row.get(col_a)
-    b = row.get(col_b)
-    if a is None or b is None:
-        return None
-    return a - b
-
-
-def _safe_sub(a, b):
-    if a is None or b is None:
-        return None
-    return a - b
+    return df
 
 
 def _last_n_minutes(df, current_min, n, col):
-    """Diferença no valor de `col` nos últimos N minutos."""
+    """Diferença no valor de `col` nos últimos N minutos. (kept for compatibility)"""
     if col not in df.columns:
         return None
     since = current_min - n
