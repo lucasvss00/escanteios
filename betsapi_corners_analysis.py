@@ -1198,6 +1198,11 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     df["target_more_corners"] = np.where(
         np.isnan(ct_final), np.nan,
         ((ct_final - c_total) > 0).astype(int))
+    # Targets separados home/away (para modelos split)
+    ch_final = df.get("corners_home_total", pd.Series(np.nan, index=df.index)).values
+    ca_final = df.get("corners_away_total", pd.Series(np.nan, index=df.index)).values
+    df["target_corners_home_final"] = ch_final
+    df["target_corners_away_final"] = ca_final
 
     # ------------------------------------------------------------------
     # 3. Momentum deltas (entre snapshots consecutivos do mesmo jogo)
