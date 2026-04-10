@@ -2073,6 +2073,75 @@ try:
         p10_cal  = quantile_models["q10"].predict(X_cal)
         p90_cal  = quantile_models["q90"].predict(X_cal)
 
+        # ==================================================================
+        # 6c-bis. Modelos home/away separados (A/B vs single-total)
+        #
+        # Treina dois XGBoost independentes com os mesmos hiperparâmetros
+        # e o mesmo feature set, mas targets corners_home_final e
+        # corners_away_final. A previsão combinada é a soma.
+        # Captura assimetria de pressão entre os times; aceita se MAE
+        # combinado for menor ou igual ao single-total.
+        # ==================================================================
+        model_home_split = None
+        model_away_split = None
+        mae_split = None
+        split_accepted = False
+        try:
+            if ("target_corners_home_final" in df_train_clean.columns
+                    and "target_corners_away_final" in df_train_clean.columns):
+                y_train_h = df_train_clean["target_corners_home_final"]
+                y_train_a = df_train_clean["target_corners_away_final"]
+                y_cal_h   = df_cal_clean["target_corners_home_final"]
+                y_cal_a   = df_cal_clean["target_corners_away_final"]
+                y_test_h  = df_test_clean["target_corners_home_final"]
+                y_test_a  = df_test_clean["target_corners_away_final"]
+
+                _valid_train = y_train_h.notna() & y_train_a.notna()
+                _valid_cal   = y_cal_h.notna()   & y_cal_a.notna()
+                _valid_test  = y_test_h.notna()  & y_test_a.notna()
+
+                if _valid_train.sum() >= 80 and _valid_test.sum() >= 20:
+                    model_home_split = xgb.XGBRegressor(**_best_xgb)
+                    model_home_split.fit(
+                        X_train[_valid_train.values], y_train_h[_valid_train.values],
+                        eval_set=[(X_cal[_valid_cal.values], y_cal_h[_valid_cal.values])],
+                        verbose=False,
+                    )
+                    model_away_split = xgb.XGBRegressor(**_best_xgb)
+                    model_away_split.fit(
+                        X_train[_valid_train.values], y_train_a[_valid_train.values],
+                        eval_set=[(X_cal[_valid_cal.values], y_cal_a[_valid_cal.values])],
+                        verbose=False,
+                    )
+
+                    pred_split_test = (model_home_split.predict(X_test[_valid_test.values])
+                                       + model_away_split.predict(X_test[_valid_test.values]))
+                    y_total_test = (y_test_h[_valid_test.values]
+                                    + y_test_a[_valid_test.values]).values
+                    mae_split = float(mean_absolute_error(y_total_test, pred_split_test))
+
+                    # Comparar com MAE single-total restrito ao mesmo subset
+                    mae_single_same = float(mean_absolute_error(
+                        y_test[_valid_test.values].values,
+                        preds_best[_valid_test.values]))
+
+                    split_accepted = mae_split <= mae_single_same * 1.005  # tolerância 0.5%
+                    print(f"\n  Modelo home/away split (A/B vs single-total):")
+                    print(f"    MAE single (mesmo subset): {mae_single_same:.4f}")
+                    print(f"    MAE split (home+away)    : {mae_split:.4f}")
+                    print(f"    → {'ACEITO (split melhor ou igual)' if split_accepted else 'REJEITADO (single melhor)'}")
+
+                    # Salva ambos os modelos
+                    joblib.dump(model_home_split,
+                                DATA_DIR / f"modelo_corners_xgb_min{snap_min}_home.joblib")
+                    joblib.dump(model_away_split,
+                                DATA_DIR / f"modelo_corners_xgb_min{snap_min}_away.joblib")
+                else:
+                    print(f"\n  (split home/away pulado: amostras insuficientes "
+                          f"train={_valid_train.sum()} test={_valid_test.sum()})")
+        except Exception as _e:
+            print(f"\n  (split home/away falhou: {_e})")
+
         coverage       = ((y_test.values >= p10_test) & (y_test.values <= p90_test)).mean()
         interval_width = (p90_test - p10_test).mean()
         mae_p50        = mean_absolute_error(y_test, p50_test)
