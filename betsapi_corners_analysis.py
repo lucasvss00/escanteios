@@ -1881,7 +1881,9 @@ try:
         feat_cols = BASE_FEATURE_COLS if snap_min == 15 else BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS
 
         # --- Determina features disponíveis e medianas usando APENAS o treino ---
-        available_train, df_train_clean = prepare_features(df_train_raw, feat_cols)
+        _split_targets = ["target_corners_home_final", "target_corners_away_final"]
+        available_train, df_train_clean = prepare_features(
+            df_train_raw, feat_cols, extra_cols=_split_targets)
 
         if len(df_train_clean) < 80:
             print(f"  ⚠ Dados insuficientes no treino ({len(df_train_clean)} amostras). Pulando.")
