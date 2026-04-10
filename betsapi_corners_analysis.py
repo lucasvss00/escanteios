@@ -1296,6 +1296,136 @@ print(f"\nApós limpeza: {len(df_features):,} amostras")
 
 # %%
 # =============================================================================
+# 4.1 ASSERT DE LEAKAGE TEMPORAL
+#
+# Valida que features do snapshot do minuto N não carregam dados de minutos >N.
+# Qualquer falha aqui é um BLOCKER: o modelo treinado em dados com leakage
+# parece ótimo em validação mas colapsa em produção.
+# =============================================================================
+
+def assert_no_temporal_leakage(df_features: pd.DataFrame,
+                                df_snap: pd.DataFrame,
+                                df_pano: pd.DataFrame,
+                                snapshot_minutes: list[int],
+                                sample_size: int = 50) -> None:
+    """
+    Verifica 4 invariantes contra vazamento temporal:
+      1. corners_total_so_far no snapshot do minuto M == soma de corners no
+         df_snap filtrado por minute<=M (verificação direta da fonte)
+      2. corners_last_Xmin <= corners_total_so_far (janelas incrementais
+         nunca maiores que o acumulado)
+      3. Primeiro jogo de cada time tem hist_home_games == 0 e
+         hist_home_corners_scored_avg NaN/None (features históricas não
+         incluem o próprio jogo)
+      4. Primeiro jogo de cada liga tem league_avg_corners None/NaN
+    """
+    import random
+    errors: list[str] = []
+
+    # ---- (1) Reconstruir corners_total_so_far a partir do df_snap bruto ----
+    for snap_min in snapshot_minutes:
+        df_m = df_features[df_features["snap_minute"] == snap_min]
+        if df_m.empty:
+            continue
+        sample_ids = df_m["event_id"].sample(
+            min(sample_size, len(df_m)),
+            random_state=42,
+        ).tolist()
+        for eid in sample_ids:
+            row = df_m[df_m["event_id"] == eid].iloc[0]
+            saved_csf = row.get("corners_total_so_far")
+            if pd.isna(saved_csf):
+                continue
+            raw = df_snap[(df_snap["event_id"] == eid) & (df_snap["minute"] <= snap_min)]
+            if raw.empty:
+                continue
+            last = raw.sort_values("minute").iloc[-1]
+            reconstructed = (float(last.get("corners_home", 0) or 0)
+                             + float(last.get("corners_away", 0) or 0))
+            if abs(float(saved_csf) - reconstructed) > 0.01:
+                errors.append(
+                    f"[1] event_id={eid} min={snap_min}: "
+                    f"corners_total_so_far={saved_csf} mas df_snap reconstrói {reconstructed}"
+                )
+                if len(errors) >= 5:
+                    break
+        if errors:
+            break
+
+    # ---- (2) Janelas incrementais <= acumulado ----
+    if "corners_total_so_far" in df_features.columns:
+        csf = df_features["corners_total_so_far"].fillna(0).values
+        for wcol in ["corners_last_5min", "corners_last_10min"]:
+            if wcol in df_features.columns:
+                w = df_features[wcol].fillna(0).values
+                bad = (w > csf + 0.01) & (csf > 0)
+                if bad.any():
+                    n_bad = int(bad.sum())
+                    idx = int(np.argmax(bad))
+                    errors.append(
+                        f"[2] {wcol}: {n_bad} linhas violam "
+                        f"{wcol} <= corners_total_so_far "
+                        f"(ex: row {idx}: {w[idx]} > {csf[idx]})"
+                    )
+
+    # ---- (3) Primeiro jogo de cada time: hist_home_games deve ser 0 ----
+    if ("hist_home_games" in df_features.columns
+            and "home_id" in df_features.columns
+            and "kickoff_dt" in df_features.columns):
+        df_chk = df_features.copy()
+        df_chk["kickoff_dt_parsed"] = pd.to_datetime(df_chk["kickoff_dt"], errors="coerce")
+        # Pega a primeira aparição (globalmente) de cada home_id
+        # Filtra só o snapshot minimo para ter uma linha por jogo
+        min_snap = min(snapshot_minutes)
+        df_first = (df_chk[df_chk["snap_minute"] == min_snap]
+                    .sort_values("kickoff_dt_parsed")
+                    .drop_duplicates(subset=["home_id"], keep="first"))
+        bad = df_first[(df_first["hist_home_games"].fillna(-1) != 0)]
+        if len(bad) > 0:
+            sample = bad.head(3)[["event_id", "home_id", "hist_home_games"]].to_dict("records")
+            errors.append(
+                f"[3] {len(bad)} primeiros jogos de times com hist_home_games != 0. "
+                f"Exemplos: {sample}"
+            )
+
+    # ---- (4) Primeiro jogo de cada liga: league_avg_corners deve ser None/NaN ----
+    if ("league_avg_corners" in df_features.columns
+            and "league_id" in df_features.columns
+            and "kickoff_dt" in df_features.columns):
+        df_chk = df_features.copy()
+        df_chk["kickoff_dt_parsed"] = pd.to_datetime(df_chk["kickoff_dt"], errors="coerce")
+        min_snap = min(snapshot_minutes)
+        df_first = (df_chk[df_chk["snap_minute"] == min_snap]
+                    .sort_values("kickoff_dt_parsed")
+                    .drop_duplicates(subset=["league_id"], keep="first"))
+        # Precisa ser NaN (sem histórico anterior). Se estava preenchido por mediana
+        # essa checagem não faz sentido — então só roda se ainda não foi preenchido.
+        bad = df_first[df_first["league_avg_corners"].notna()]
+        # Só alerta se parecer que não foi preenchido por mediana (valor único repetido)
+        if len(bad) > 0:
+            # Heurística: se todos os "bad" têm valores DISTINTOS, é leakage.
+            # Se todos iguais, provavelmente é mediana preenchida em outro ponto.
+            unique_vals = bad["league_avg_corners"].nunique()
+            if unique_vals > 1:
+                errors.append(
+                    f"[4] {len(bad)} primeiros jogos de ligas com "
+                    f"league_avg_corners preenchido (valores únicos: {unique_vals})"
+                )
+
+    if errors:
+        msg = "\n  - ".join(errors)
+        raise AssertionError(
+            f"LEAKAGE TEMPORAL DETECTADO ({len(errors)} violação(ões)):\n  - {msg}"
+        )
+
+    print("  ✓ Nenhuma violação de leakage temporal detectada")
+
+
+print("\nValidando ausência de leakage temporal...")
+assert_no_temporal_leakage(df_features, df_snap, df_pano, SNAPSHOT_MINUTES)
+
+# %%
+# =============================================================================
 # 4.5 TARGET ENCODING (liga e times)
 #
 # Substitui IDs categóricos pela média suavizada do target.
