@@ -79,22 +79,61 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
     df = df.sort_values("kickoff_dt_parsed").reset_index(drop=True)
 
     # Colunas de stats que queremos agregar por time
+    # _home_total = stat do time da casa; _away_total = stat do visitante
     stat_cols = {
         "corners_total":                "corners",
         "corners_home_total":           "corners_scored",
         "corners_away_total":           "corners_conceded",
         "dangerous_attacks_home_total": "dangerous_attacks",
+        "dangerous_attacks_away_total": "dangerous_attacks_against",
         "attacks_home_total":           "attacks",
+        "attacks_away_total":           "attacks_against",
         "shots_on_target_home_total":   "shots_on_target",
+        "shots_on_target_away_total":   "shots_on_target_against",
+        "shots_off_target_home_total":  "shots_off_target",
+        "shots_off_target_away_total":  "shots_off_target_against",
         "total_goals":                  "goals",
     }
     # Filtra apenas colunas que existem
     stat_cols = {k: v for k, v in stat_cols.items() if k in df.columns}
 
+    # Pares home<->away para swap correto ao registrar histórico do visitante
+    _swap_pairs_def = {
+        "corners_home_total": "corners_away_total",
+        "dangerous_attacks_home_total": "dangerous_attacks_away_total",
+        "attacks_home_total": "attacks_away_total",
+        "shots_on_target_home_total": "shots_on_target_away_total",
+        "shots_off_target_home_total": "shots_off_target_away_total",
+    }
+    swap_pairs = {k: v for k, v in _swap_pairs_def.items()
+                  if k in stat_cols and v in stat_cols}
+
     # Acumula histórico por time (home_id e away_id)
     team_history: dict[str, list[dict]] = {}
     last_game_date: dict[str, pd.Timestamp] = {}
     result_rows = []
+
+    def _team_feats(hist: list[dict], prefix: str, feat: dict) -> None:
+        """Calcula features históricas para um time (home ou away)."""
+        for orig_col, alias in stat_cols.items():
+            vals = [h.get(orig_col) for h in hist if h.get(orig_col) is not None]
+            feat[f"{prefix}_{alias}_avg"] = round(np.mean(vals), 2) if vals else None
+        feat[f"{prefix}_games"] = len(hist)
+
+        # Forma recente: últimos 5 / 10 jogos — corners scored
+        cs_vals = [h.get("corners_home_total") for h in hist
+                   if h.get("corners_home_total") is not None]
+        last5 = cs_vals[-5:] if len(cs_vals) >= 5 else cs_vals
+        last10 = cs_vals[-10:] if len(cs_vals) >= 10 else cs_vals
+        feat[f"{prefix}_corners_last5_avg"] = round(np.mean(last5), 2) if last5 else None
+        feat[f"{prefix}_corners_last10_avg"] = round(np.mean(last10), 2) if last10 else None
+        # Consistência / volatilidade
+        feat[f"{prefix}_corners_std_last10"] = (
+            round(float(np.std(last10)), 2) if len(last10) >= 2 else None)
+
+    _null_extras = [
+        "corners_last5_avg", "corners_last10_avg", "corners_std_last10",
+    ]
 
     for _, row in df.iterrows():
         home_id = str(row.get("home_id", ""))
@@ -118,10 +157,7 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
         # Features históricas do time da casa
         if home_id and home_id in team_history:
             hist = team_history[home_id][-window:]
-            for orig_col, alias in stat_cols.items():
-                vals = [h.get(orig_col) for h in hist if h.get(orig_col) is not None]
-                feat[f"hist_home_{alias}_avg"] = round(np.mean(vals), 2) if vals else None
-            feat["hist_home_games"] = len(hist)
+            _team_feats(hist, "hist_home", feat)
             # Mando: média de escanteios apenas nos jogos em CASA
             home_games = [h for h in hist if h.get("_is_home") is True]
             hh_vals = [h.get("corners_home_total") for h in home_games
@@ -132,16 +168,14 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
                 feat[f"hist_home_{alias}_avg"] = None
             feat["hist_home_games"] = 0
             feat["hist_home_corners_home_avg"] = None
+            for ex in _null_extras:
+                feat[f"hist_home_{ex}"] = None
 
         # Features históricas do time visitante
         if away_id and away_id in team_history:
             hist = team_history[away_id][-window:]
-            for orig_col, alias in stat_cols.items():
-                vals = [h.get(orig_col) for h in hist if h.get(orig_col) is not None]
-                feat[f"hist_away_{alias}_avg"] = round(np.mean(vals), 2) if vals else None
-            feat["hist_away_games"] = len(hist)
+            _team_feats(hist, "hist_away", feat)
             # Mando: média de escanteios apenas nos jogos FORA
-            # (corners_home_total já foi invertido para away_stats → representa corners do time visitante)
             away_games = [h for h in hist if h.get("_is_home") is False]
             aa_vals = [h.get("corners_home_total") for h in away_games
                        if h.get("corners_home_total") is not None]
@@ -151,6 +185,8 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
                 feat[f"hist_away_{alias}_avg"] = None
             feat["hist_away_games"] = 0
             feat["hist_away_corners_away_avg"] = None
+            for ex in _null_extras:
+                feat[f"hist_away_{ex}"] = None
 
         result_rows.append(feat)
 
@@ -159,11 +195,11 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
         game_stats["_is_home"] = True
         team_history.setdefault(home_id, []).append(game_stats)
 
-        # Para o visitante, inverte home/away nas stats de escanteios e marca como away
+        # Para o visitante, inverte TODOS os pares home/away e marca como away
         away_stats = dict(game_stats)
-        if "corners_home_total" in away_stats and "corners_away_total" in df.columns:
-            away_stats["corners_home_total"] = row.get("corners_away_total")
-            away_stats["corners_away_total"] = row.get("corners_home_total")
+        for home_col, away_col in swap_pairs.items():
+            away_stats[home_col] = row.get(away_col)
+            away_stats[away_col] = row.get(home_col)
         away_stats["_is_home"] = False
         team_history.setdefault(away_id, []).append(away_stats)
 
