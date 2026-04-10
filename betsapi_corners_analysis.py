@@ -1231,7 +1231,7 @@ try:
         "pressure_index_home", "pressure_index_away",
         "dominance_index", "volatility_index", "momentum_shift",
         # Projeções
-        "expected_remaining_corners", "adjusted_expected_remaining",
+        "expected_remaining_corners", "adjusted_expected_remaining", "remaining_vs_expected",
         # 1º vs 2º tempo
         "first_half_corners", "second_half_corners_so_far",
         "second_half_rate", "delta_rate_halves", "fatigue_factor",
