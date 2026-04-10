@@ -374,7 +374,8 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                          df_hist: pd.DataFrame,
                          snapshot_minutes: list[int],
                          league_avg_map: dict | None = None,
-                         league_std_map: dict | None = None) -> pd.DataFrame:
+                         league_std_map: dict | None = None,
+                         df_h2h: pd.DataFrame | None = None) -> pd.DataFrame:
     """
     Versão vetorizada — ~10-50× mais rápida que a versão com loop.
     Para cada jogo e cada minuto de snapshot:
