@@ -674,10 +674,16 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
 
     # Remaining projections
     total_time_rem = df["total_time_remaining"].values
-    df["expected_remaining_corners"] = np.round(
-        df["corners_rate_per_min"].values * total_time_rem, 4)
-    df["adjusted_expected_remaining"] = np.round(
-        df["corners_rate_last_10"].values * total_time_rem, 4)
+    expected_remaining = df["corners_rate_per_min"].values * total_time_rem
+    adjusted_expected_remaining = df["corners_rate_last_10"].values * total_time_rem
+
+    df["expected_remaining_corners"] = np.round(expected_remaining, 4)
+    df["adjusted_expected_remaining"] = np.round(adjusted_expected_remaining, 4)
+
+    # Ratio: actual remaining / expected remaining
+    actual_remaining = df.get("target_corners_remaining", pd.Series(np.nan, index=df.index)).values
+    df["remaining_vs_expected"] = np.round(
+        actual_remaining / np.maximum(expected_remaining, 0.01), 4)
 
     # --- 1st vs 2nd half analysis ---
     ht_ch = df["_ht_ch"].fillna(0).values
