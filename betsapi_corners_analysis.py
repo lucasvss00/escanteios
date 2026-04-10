@@ -1896,10 +1896,12 @@ try:
         # Aplica as mesmas colunas e medianas do treino ao cal e test
         _, df_cal_clean  = prepare_features(df_cal_raw,  feat_cols,
                                              medians=train_medians,
-                                             available_override=available_train)
+                                             available_override=available_train,
+                                             extra_cols=_split_targets)
         _, df_test_clean = prepare_features(df_test_raw, feat_cols,
                                              medians=train_medians,
-                                             available_override=available_train)
+                                             available_override=available_train,
+                                             extra_cols=_split_targets)
 
         available = available_train
 
