@@ -696,6 +696,11 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
         hist_cols = ["event_id"] + hist_cols
     df = df.merge(df_hist[hist_cols], on="event_id", how="left")
 
+    # --- Merge com H2H (confronto direto) ---
+    if df_h2h is not None and len(df_h2h) > 0:
+        h2h_cols = [c for c in df_h2h.columns if c.startswith("h2h_") or c == "event_id"]
+        df = df.merge(df_h2h[h2h_cols], on="event_id", how="left")
+
     # Expectativa combinada (hist)
     haf = df.get("hist_home_corners_scored_avg", pd.Series(np.nan, index=df.index)).astype(float)
     haa = df.get("hist_home_corners_conceded_avg", pd.Series(np.nan, index=df.index)).astype(float)
