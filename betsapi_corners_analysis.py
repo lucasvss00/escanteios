@@ -949,7 +949,9 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     df["corners_per_goal_kick"] = np.round(c_total / np.maximum(gk_h + gk_a, 1), 4)
 
     # --- Merge panorama data (pre-game odds, HT score, targets) ---
-    pano_cols = ["event_id", "corners_total", "ht_score_home", "ht_score_away",
+    pano_cols = ["event_id", "corners_total",
+                 "corners_home_total", "corners_away_total",
+                 "ht_score_home", "ht_score_away",
                  "corners_line", "corners_over_odds", "corners_under_odds",
                  "asian_corners_line", "asian_corners_home_odds", "asian_corners_away_odds",
                  "odds_home_win", "odds_draw", "odds_away_win",
