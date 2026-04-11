@@ -1869,6 +1869,11 @@ try:
                     or c.endswith("_target_enc")]
         fill_zero = [c for c in available if c not in fill_med]
 
+        # Converte colunas object para numérico antes de fillna (evita FutureWarning)
+        for c in available:
+            if df_out[c].dtype == object:
+                df_out[c] = pd.to_numeric(df_out[c], errors="coerce")
+
         for c in fill_med:
             fill_val = medians[c] if (medians and c in medians) else df_out[c].median()
             df_out[c] = df_out[c].fillna(fill_val)
