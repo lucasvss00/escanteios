@@ -1375,49 +1375,90 @@ def assert_no_temporal_leakage(df_features: pd.DataFrame,
                         f"(ex: row {idx}: {w[idx]} > {csf[idx]})"
                     )
 
-    # ---- (3) Primeiro jogo de cada time: hist_home_games deve ser 0 ----
+    # ---- (3) Primeira aparição global de cada time: hist deve ser 0 ----
+    # Importante: build_team_history conta como "histórico do time" TODOS os
+    # jogos anteriores (home OU away no passado). Então precisamos encontrar a
+    # PRIMEIRA vez (cronologicamente, no panorama) que um team_id aparece em
+    # qualquer papel, e validar que o respectivo hist_{home,away}_games é 0.
     if ("hist_home_games" in df_features.columns
-            and "home_id" in df_features.columns
-            and "kickoff_dt" in df_features.columns):
-        df_chk = df_features.copy()
-        df_chk["kickoff_dt_parsed"] = pd.to_datetime(df_chk["kickoff_dt"], errors="coerce")
-        # Pega a primeira aparição (globalmente) de cada home_id
-        # Filtra só o snapshot minimo para ter uma linha por jogo
+            and "hist_away_games" in df_features.columns
+            and "home_id" in df_pano.columns
+            and "kickoff_dt" in df_pano.columns):
+        _pano_sorted = df_pano.copy()
+        _pano_sorted["_dt"] = pd.to_datetime(_pano_sorted["kickoff_dt"], errors="coerce")
+        _pano_sorted = _pano_sorted.sort_values("_dt").reset_index(drop=True)
+
+        seen: set = set()
+        first_appearance: dict[str, tuple[str, str]] = {}  # team_id -> (event_id, role)
+        for _, r in _pano_sorted.iterrows():
+            h, a = str(r.get("home_id", "")), str(r.get("away_id", ""))
+            eid = r.get("event_id")
+            if h and h not in seen:
+                first_appearance[h] = (eid, "home")
+                seen.add(h)
+            if a and a not in seen:
+                first_appearance[a] = (eid, "away")
+                seen.add(a)
+
+        # Usa snapshot mínimo de features para ter uma linha por jogo
         min_snap = min(snapshot_minutes)
-        df_first = (df_chk[df_chk["snap_minute"] == min_snap]
-                    .sort_values("kickoff_dt_parsed")
-                    .drop_duplicates(subset=["home_id"], keep="first"))
-        bad = df_first[(df_first["hist_home_games"].fillna(-1) != 0)]
-        if len(bad) > 0:
-            sample = bad.head(3)[["event_id", "home_id", "hist_home_games"]].to_dict("records")
+        df_min = df_features[df_features["snap_minute"] == min_snap].set_index("event_id")
+
+        violations_3: list[dict] = []
+        for team_id, (eid, role) in first_appearance.items():
+            if eid not in df_min.index:
+                continue
+            row = df_min.loc[eid]
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[0]
+            col = "hist_home_games" if role == "home" else "hist_away_games"
+            val = row.get(col)
+            if pd.notna(val) and float(val) != 0:
+                violations_3.append({"event_id": eid, "team": team_id,
+                                      "role": role, col: float(val)})
+                if len(violations_3) >= 5:
+                    break
+
+        if violations_3:
             errors.append(
-                f"[3] {len(bad)} primeiros jogos de times com hist_home_games != 0. "
-                f"Exemplos: {sample}"
+                f"[3] {len(violations_3)}+ primeiras aparições com histórico não-zero. "
+                f"Exemplos: {violations_3[:3]}"
             )
 
-    # ---- (4) Primeiro jogo de cada liga: league_avg_corners deve ser None/NaN ----
+    # ---- (4) Primeiro jogo de cada liga: league_avg_corners deve ser NaN ----
     if ("league_avg_corners" in df_features.columns
-            and "league_id" in df_features.columns
-            and "kickoff_dt" in df_features.columns):
-        df_chk = df_features.copy()
-        df_chk["kickoff_dt_parsed"] = pd.to_datetime(df_chk["kickoff_dt"], errors="coerce")
+            and "league_id" in df_pano.columns
+            and "kickoff_dt" in df_pano.columns):
+        _pano_sorted = df_pano.copy()
+        _pano_sorted["_dt"] = pd.to_datetime(_pano_sorted["kickoff_dt"], errors="coerce")
+        _pano_sorted = _pano_sorted.sort_values("_dt").reset_index(drop=True)
+        first_by_league = (_pano_sorted.dropna(subset=["league_id"])
+                           .drop_duplicates(subset=["league_id"], keep="first")
+                           [["event_id", "league_id"]])
+
         min_snap = min(snapshot_minutes)
-        df_first = (df_chk[df_chk["snap_minute"] == min_snap]
-                    .sort_values("kickoff_dt_parsed")
-                    .drop_duplicates(subset=["league_id"], keep="first"))
-        # Precisa ser NaN (sem histórico anterior). Se estava preenchido por mediana
-        # essa checagem não faz sentido — então só roda se ainda não foi preenchido.
-        bad = df_first[df_first["league_avg_corners"].notna()]
-        # Só alerta se parecer que não foi preenchido por mediana (valor único repetido)
-        if len(bad) > 0:
-            # Heurística: se todos os "bad" têm valores DISTINTOS, é leakage.
-            # Se todos iguais, provavelmente é mediana preenchida em outro ponto.
-            unique_vals = bad["league_avg_corners"].nunique()
-            if unique_vals > 1:
-                errors.append(
-                    f"[4] {len(bad)} primeiros jogos de ligas com "
-                    f"league_avg_corners preenchido (valores únicos: {unique_vals})"
-                )
+        df_min = df_features[df_features["snap_minute"] == min_snap].set_index("event_id")
+
+        violations_4: list = []
+        for _, r in first_by_league.iterrows():
+            eid = r["event_id"]
+            if eid not in df_min.index:
+                continue
+            row = df_min.loc[eid]
+            if isinstance(row, pd.DataFrame):
+                row = row.iloc[0]
+            val = row.get("league_avg_corners")
+            if pd.notna(val):
+                violations_4.append({"event_id": eid, "league_id": r["league_id"],
+                                      "league_avg_corners": float(val)})
+                if len(violations_4) >= 5:
+                    break
+
+        if violations_4:
+            errors.append(
+                f"[4] {len(violations_4)}+ primeiros jogos de ligas com "
+                f"league_avg_corners preenchido. Exemplos: {violations_4[:3]}"
+            )
 
     if errors:
         msg = "\n  - ".join(errors)
