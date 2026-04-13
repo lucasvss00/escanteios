@@ -368,7 +368,13 @@ league_avg, league_std = build_league_avg_corners(df_pano)
 # =============================================================================
 
 # Minutos de interesse para previsão ao vivo
-SNAPSHOT_MINUTES = [15, 30, 45, 60, 75]
+_DEFAULT_SNAPSHOTS = [15, 30, 45, 60, 75]
+_GRANULAR_SNAPSHOTS = list(range(10, 86, 5))  # [10, 15, 20, ..., 80, 85]
+
+if "--granular-snapshots" in _sys.argv:
+    SNAPSHOT_MINUTES = _GRANULAR_SNAPSHOTS
+else:
+    SNAPSHOT_MINUTES = _DEFAULT_SNAPSHOTS
 
 def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
                          df_hist: pd.DataFrame,
