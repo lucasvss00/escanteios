@@ -2200,6 +2200,71 @@ try:
         except Exception as _e:
             print(f"\n  (split home/away falhou: {_e})")
 
+        # ==================================================================
+        # 6c-ngb. NGBoost com distribuição Poisson (CRPS nativo)
+        #
+        # Aprende a distribuição diretamente, otimizando CRPS em vez de
+        # squared error. A distribuição Poisson é natural para contagens
+        # (escanteios). O mu previsto é usado como 6º método probabilístico.
+        # ==================================================================
+        _ngb_model = None
+        _ngb_mu_test = None
+        _ngb_mu_cal = None
+        _ngb_mae = None
+        _ngb_crps = None
+
+        if _NGBOOST:
+            try:
+                _ngb_model = NGBRegressor(
+                    Dist=NGBPoisson,
+                    Score=CRPScore,
+                    n_estimators=500,
+                    learning_rate=0.03,
+                    minibatch_frac=0.8,
+                    verbose=False,
+                    random_state=42,
+                    natural_gradient=True,
+                )
+                _ngb_model.fit(
+                    X_train.values, y_train.values.astype(int),
+                    X_val=X_cal.values, Y_val=y_cal.values.astype(int),
+                    early_stopping_rounds=30,
+                )
+
+                # Extrair mu (taxa Poisson prevista)
+                _ngb_dist_test = _ngb_model.pred_dist(X_test.values)
+                _ngb_dist_cal  = _ngb_model.pred_dist(X_cal.values)
+
+                # Acesso ao parâmetro mu — compatível com ngboost >= 0.5
+                try:
+                    _ngb_mu_test = np.clip(_ngb_dist_test.params["mu"], 0.01, 60.0)
+                    _ngb_mu_cal  = np.clip(_ngb_dist_cal.params["mu"],  0.01, 60.0)
+                except (KeyError, TypeError):
+                    _ngb_mu_test = np.clip(_ngb_dist_test.mean(), 0.01, 60.0)
+                    _ngb_mu_cal  = np.clip(_ngb_dist_cal.mean(),  0.01, 60.0)
+
+                _ngb_mae = float(mean_absolute_error(y_test, _ngb_mu_test))
+
+                # CRPS numérico para Poisson
+                _crps_vals = []
+                for _yi, _mui in zip(y_test.values, _ngb_mu_test):
+                    _k_max = int(max(_mui * 3, _yi * 2, 30))
+                    _ks = np.arange(0, _k_max + 1)
+                    _cdf = sp_poisson.cdf(_ks, mu=_mui)
+                    _ind = (_ks >= _yi).astype(float)
+                    _crps_vals.append(float(np.sum((_cdf - _ind) ** 2)))
+                _ngb_crps = float(np.mean(_crps_vals))
+
+                print(f"\n  NGBoost (Poisson, CRPScore):")
+                print(f"    MAE: {_ngb_mae:.3f}  (vs XGBoost: {mae_best:.3f})")
+                print(f"    CRPS (test): {_ngb_crps:.4f}")
+
+            except Exception as _e:
+                print(f"\n  (NGBoost treino falhou: {_e})")
+                _ngb_model = None
+                _ngb_mu_test = None
+                _ngb_mu_cal = None
+
         coverage       = ((y_test.values >= p10_test) & (y_test.values <= p90_test)).mean()
         interval_width = (p90_test - p10_test).mean()
         mae_p50        = mean_absolute_error(y_test, p50_test)
