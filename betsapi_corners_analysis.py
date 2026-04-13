@@ -3002,7 +3002,7 @@ try:
             n_wf = len(df_min)
             fold_size = n_wf // N_WF_FOLDS
 
-            feat_cols_wf = (BASE_FEATURE_COLS if snap_min == 15
+            feat_cols_wf = (BASE_FEATURE_COLS if snap_min == min(SNAPSHOT_MINUTES)
                             else BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS)
             enc_cols_wf = [c for c in ENCODE_COLS if c in df_min.columns]
 
