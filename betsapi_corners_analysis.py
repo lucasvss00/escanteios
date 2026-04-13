@@ -1953,7 +1953,7 @@ try:
             te_min = None
 
         # Minuto 15 não tem momentum; demais sim
-        feat_cols = BASE_FEATURE_COLS if snap_min == 15 else BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS
+        feat_cols = BASE_FEATURE_COLS if snap_min == min(SNAPSHOT_MINUTES) else BASE_FEATURE_COLS + MOMENTUM_FEATURE_COLS
 
         # --- Determina features disponíveis e medianas usando APENAS o treino ---
         _split_targets = ["target_corners_home_final", "target_corners_away_final"]
