@@ -2370,6 +2370,15 @@ try:
         p_nb_cal  = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
                                for fl, m in zip(fl_cal, preds_cal_c)])
 
+        # ---- (4) NGBoost Poisson nativo ----
+        p_ngb_test = None
+        p_ngb_cal  = None
+        if _ngb_model is not None and _ngb_mu_test is not None:
+            p_ngb_test = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
+                                    for fl, m in zip(fl_test, _ngb_mu_test)])
+            p_ngb_cal  = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
+                                    for fl, m in zip(fl_cal, _ngb_mu_cal)])
+
         # ---- (c) Logística multi-feature ----
         # FIT no TRAIN (não no cal!) para evitar leakage na seleção de método/threshold
         def _logfeat(pred_c, dline, X_df, min_):
