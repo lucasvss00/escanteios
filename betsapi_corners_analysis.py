@@ -1298,6 +1298,8 @@ if not _FORCE_REBUILD and _features_fresh() and _snapshots_match():
 else:
     if _FORCE_REBUILD:
         print("\n--rebuild solicitado: reconstruindo features do zero...")
+    elif _FEATURES_PATH.exists() and not _snapshots_match():
+        print(f"\nSnapshot minutes mudaram ({len(SNAPSHOT_MINUTES)} minutos) — reconstruindo features...")
     else:
         print("\nfeatures_ml.parquet não existe ou está desatualizado — construindo...")
     df_features = build_live_features(df_snap, df_pano, df_team_hist, SNAPSHOT_MINUTES,
