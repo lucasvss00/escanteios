@@ -1568,6 +1568,18 @@ try:
         _OPTUNA = False
         print("  (optuna não instalado — usando hiperparâmetros fixos. pip install optuna)")
 
+    _SKIP_NGBOOST = "--no-ngboost" in _sys.argv
+    _NGBOOST = False
+    if not _SKIP_NGBOOST:
+        try:
+            from ngboost import NGBRegressor
+            from ngboost.distns import Poisson as NGBPoisson
+            from ngboost.scores import CRPScore
+            _NGBOOST = True
+        except ImportError:
+            _NGBOOST = False
+            print("  (ngboost não instalado — pip install ngboost)")
+
     # --- Features base (usadas por todos os minutos) ---
     BASE_FEATURE_COLS = [
         # Escanteios ao vivo
