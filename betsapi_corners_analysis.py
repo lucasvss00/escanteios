@@ -2869,11 +2869,17 @@ try:
 
         joblib.dump(train_medians, DATA_DIR / f"train_medians_min{snap_min}.joblib")
 
+        if _ngb_model is not None:
+            joblib.dump(_ngb_model, DATA_DIR / f"modelo_corners_ngb_min{snap_min}.joblib")
+
         all_metadata["models"][snap_min] = {
             "features":         available,
             "selected_features": selected_features,
             "mae_split":         round(mae_split, 4) if mae_split is not None else None,
             "split_accepted":    bool(split_accepted),
+            "ngboost_available": _ngb_model is not None,
+            "ngboost_mae":       round(float(_ngb_mae), 4) if _ngb_mae is not None else None,
+            "ngboost_crps":      round(float(_ngb_crps), 4) if _ngb_crps is not None else None,
             "n_train":          len(X_train),
             "n_cal":            len(X_cal),
             "n_test":           len(X_test),
