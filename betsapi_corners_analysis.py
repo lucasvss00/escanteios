@@ -1263,7 +1263,6 @@ def _last_n_minutes(df, current_min, n, col):
 # Para forçar rebuild: delete o arquivo ou passe --rebuild na linha de comando.
 #   python betsapi_corners_analysis.py --rebuild
 # =============================================================================
-import sys as _sys
 _FEATURES_PATH = DATA_DIR / "features_ml.parquet"
 _FORCE_REBUILD = "--rebuild" in _sys.argv
 _FORCE_RETUNE  = "--retune"  in _sys.argv
