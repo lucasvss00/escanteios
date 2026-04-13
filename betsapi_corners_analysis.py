@@ -2453,6 +2453,9 @@ try:
             "Logistic": (p_logistic_test, p_logistic_cal),
             "XGBClf":   (p_clf_test,      p_clf_cal),
         }
+        if p_ngb_test is not None:
+            methods["NGBPoisson"] = (p_ngb_test, p_ngb_cal)
+
         brier_cal_scores = {
             name: float(np.mean((p_cal - over_actual_cal) ** 2))
             for name, (_, p_cal) in methods.items()
@@ -2461,11 +2464,42 @@ try:
         p_over     = methods[best_method][0]
         p_over_cal = methods[best_method][1]
 
+        # ---- CRPS por método (métrica adicional de sharpness) ----
+        def _crps_poisson(y_true, mu_arr):
+            """CRPS numérico para distribuição Poisson."""
+            vals = []
+            for _y, _m in zip(y_true, mu_arr):
+                _k_max = int(max(_m * 3, _y * 2, 30))
+                _ks = np.arange(0, _k_max + 1)
+                _cdf = sp_poisson.cdf(_ks, mu=max(_m, 0.01))
+                _ind = (_ks >= _y).astype(float)
+                vals.append(float(np.sum((_cdf - _ind) ** 2)))
+            return float(np.mean(vals))
+
+        def _crps_normal(y_true, mu_arr, sigma_arr):
+            """CRPS forma fechada para distribuição Normal."""
+            from scipy.stats import norm as _norm_crps
+            z = (y_true - mu_arr) / np.maximum(sigma_arr, 0.01)
+            vals = sigma_arr * (z * (2 * _norm_crps.cdf(z) - 1)
+                                + 2 * _norm_crps.pdf(z)
+                                - 1.0 / np.sqrt(np.pi))
+            return float(np.mean(vals))
+
+        crps_scores = {}
+        # CRPS para Normal (usa sigma heteroscedástico)
+        crps_scores["Normal"] = _crps_normal(y_test.values, preds_test_c, sigma_het_test)
+        # CRPS para Poisson (usa XGBoost mean como mu)
+        crps_scores["Poisson"] = _crps_poisson(y_test.values, preds_test_c)
+        # CRPS para NGBPoisson (usa NGBoost mu)
+        if _ngb_mu_test is not None:
+            crps_scores["NGBPoisson"] = _crps_poisson(y_test.values, _ngb_mu_test)
+
         print(f"\n  Método probabilístico (seleção por Brier no cal set):")
-        print(f"    {'Método':<12s}  {'Brier(cal)':>10s}")
+        print(f"    {'Método':<12s}  {'Brier(cal)':>10s}  {'CRPS(test)':>10s}")
         for mname, bv in brier_cal_scores.items():
             mark = "  ← SELECIONADO" if mname == best_method else ""
-            print(f"    {mname:<12s}  {bv:>10.4f}{mark}")
+            _crps_str = f"{crps_scores[mname]:.4f}" if mname in crps_scores else "     -"
+            print(f"    {mname:<12s}  {bv:>10.4f}  {_crps_str:>10s}{mark}")
         if best_method == "NegBinom":
             print(f"    (NegBinom r={nb_r:.2f})")
 
