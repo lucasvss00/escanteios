@@ -2925,16 +2925,18 @@ try:
     print(f"\n{'═' * 62}")
     print(f"  RESUMO DOS MODELOS")
     print(f"{'═' * 62}")
-    print(f"  {'Min':>4s}  {'MAE best':>9s}  {'MAE P50':>8s}  {'P10-P90':>8s}  {'Cobert':>7s}  {'Cal?':>4s}")
-    print(f"  {'─'*4}  {'─'*9}  {'─'*8}  {'─'*8}  {'─'*7}  {'─'*4}")
+    print(f"  {'Min':>4s}  {'MAE xgb':>9s}  {'MAE ngb':>9s}  {'CRPS ngb':>9s}  {'P10-P90':>8s}  {'Método':>12s}")
+    print(f"  {'─'*4}  {'─'*9}  {'─'*9}  {'─'*9}  {'─'*8}  {'─'*12}")
     for m, info in all_metadata["models"].items():
-        cal_flag = "✓" if info["use_calibration"] else "✗"
-        print(f"  {m:>4d}  {info['mae_best']:>9.3f}  {info['mae_p50']:>8.3f}  "
-              f"{info['interval_width']:>7.1f}  {info['coverage_80']:>6.1%}  {cal_flag:>4s}")
+        _ngb_mae_s = f"{info['ngboost_mae']:.3f}" if info.get("ngboost_mae") else "    -"
+        _ngb_crps_s = f"{info['ngboost_crps']:.4f}" if info.get("ngboost_crps") else "    -"
+        print(f"  {m:>4d}  {info['mae_best']:>9.3f}  {_ngb_mae_s:>9s}  {_ngb_crps_s:>9s}  "
+              f"{info['interval_width']:>7.1f}  {info['dynamic_line_method']:>12s}")
 
     n_models = len(all_metadata["models"]) * 4  # mean + q10 + q50 + q90
+    n_ngb = sum(1 for info in all_metadata["models"].values() if info.get("ngboost_available"))
     n_cals   = sum(1 for info in all_metadata["models"].values() if info["use_calibration"])
-    print(f"\n  Total: {n_models} modelos + {n_cals} calibradores + 1 encoder salvos")
+    print(f"\n  Total: {n_models} XGBoost + {n_ngb} NGBoost + {n_cals} calibradores salvos")
     print(f"  Diretório: {DATA_DIR}")
 
     # --- Resumo da linha dinâmica ---
