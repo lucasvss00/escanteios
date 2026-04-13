@@ -2797,6 +2797,34 @@ try:
                 if _accepted:
                     selected_features = _candidate_features
 
+                    # Retreina NGBoost no subset reduzido se disponível
+                    if _ngb_model is not None and _NGBOOST:
+                        try:
+                            _ngb_red = NGBRegressor(
+                                Dist=NGBPoisson, Score=CRPScore,
+                                n_estimators=500, learning_rate=0.03,
+                                minibatch_frac=0.8, verbose=False,
+                                random_state=42, natural_gradient=True,
+                            )
+                            _ngb_red.fit(
+                                X_train_red.values, y_train.values.astype(int),
+                                X_val=X_cal_red.values,
+                                Y_val=y_cal.values.astype(int),
+                                early_stopping_rounds=30,
+                            )
+                            _ngb_model = _ngb_red
+                            _ngb_dist_red = _ngb_model.pred_dist(X_test_red.values)
+                            try:
+                                _ngb_mu_test = np.clip(
+                                    _ngb_dist_red.params["mu"], 0.01, 60.0)
+                            except (KeyError, TypeError):
+                                _ngb_mu_test = np.clip(
+                                    _ngb_dist_red.mean(), 0.01, 60.0)
+                            _ngb_mae = float(mean_absolute_error(y_test, _ngb_mu_test))
+                            print(f"    NGBoost retreinado no subset: MAE {_ngb_mae:.4f}")
+                        except Exception as _e:
+                            print(f"    (NGBoost retrain falhou: {_e})")
+
                 # --- Salva lista de features selecionadas ---
                 with open(DATA_DIR / f"selected_features_min{snap_min}.json", "w") as _fp:
                     _json.dump({
