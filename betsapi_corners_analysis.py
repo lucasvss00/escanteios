@@ -1280,7 +1280,18 @@ def _features_fresh():
         return False
     return _FEATURES_PATH.stat().st_mtime >= _snap_mtime()
 
-if not _FORCE_REBUILD and _features_fresh():
+def _snapshots_match():
+    """True se o cache de features contém os mesmos snapshot minutes configurados."""
+    if not _FEATURES_PATH.exists():
+        return False
+    try:
+        _cached = pd.read_parquet(_FEATURES_PATH, columns=["snap_minute"])
+        _cached_set = set(_cached["snap_minute"].unique())
+        return _cached_set == set(SNAPSHOT_MINUTES)
+    except Exception:
+        return False
+
+if not _FORCE_REBUILD and _features_fresh() and _snapshots_match():
     print(f"\nCarregando features do cache: {_FEATURES_PATH}")
     df_features = pd.read_parquet(_FEATURES_PATH)
     print(f"  {len(df_features):,} linhas | {df_features['event_id'].nunique():,} jogos  (use --rebuild para regenerar)")
