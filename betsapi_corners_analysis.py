@@ -3427,3 +3427,6 @@ except ImportError as e:
 
 # %%
 print("\nAnálise concluída!")
+print(f"Log salvo em: {_LOG_PATH}")
+_sys.stdout = _tee._stream  # restaura stdout original
+_tee.close_file()
