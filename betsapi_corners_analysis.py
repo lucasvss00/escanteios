@@ -20,8 +20,32 @@ import sys as _sys
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import io as _io
+import datetime as _dt
 
 DATA_DIR = Path("dados_escanteios")
+
+# ---------------------------------------------------------------------------
+# Tee: duplica todo output de print() para console + arquivo .txt
+# ---------------------------------------------------------------------------
+class _TeeWriter:
+    """Escreve simultaneamente no stream original e num arquivo."""
+    def __init__(self, stream, filepath):
+        self._stream = stream
+        self._file = open(filepath, "w", encoding="utf-8")
+    def write(self, msg):
+        self._stream.write(msg)
+        self._file.write(msg)
+    def flush(self):
+        self._stream.flush()
+        self._file.flush()
+    def close_file(self):
+        self._file.close()
+
+DATA_DIR.mkdir(exist_ok=True)
+_LOG_PATH = DATA_DIR / f"log_analysis_{_dt.datetime.now():%Y%m%d_%H%M%S}.txt"
+_tee = _TeeWriter(_sys.stdout, _LOG_PATH)
+_sys.stdout = _tee
 
 # %%
 # =============================================================================
