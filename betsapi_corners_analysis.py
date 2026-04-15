@@ -2502,12 +2502,16 @@ try:
         sample_weights_train = 1.0 + (_corner_dev / max(_corner_dev.max(), 1.0)) * 2.0
 
         preds_cal_best  = calibrator.predict(preds_cal_raw) if use_calibration else preds_cal_raw
+        _preds_train_raw = model_mean.predict(X_train)
+        _preds_train_best = (calibrator.predict(_preds_train_raw) if use_calibration
+                             else _preds_train_raw)
+        # Aplica bias correction por faixa (se ativa) a cal e train também
+        if _bias_corrections and mae_best == mae_bc:
+            preds_cal_best    = _apply_bias_correction(preds_cal_best, _bias_corrections)
+            _preds_train_best = _apply_bias_correction(_preds_train_best, _bias_corrections)
         preds_cal_c     = np.clip(preds_cal_best, 0.1, 60.0)
         preds_test_c    = np.clip(preds_best,     0.1, 60.0)
-        _preds_train_raw = model_mean.predict(X_train)
-        preds_train_c   = np.clip(
-            calibrator.predict(_preds_train_raw) if use_calibration else _preds_train_raw,
-            0.1, 60.0)
+        preds_train_c   = np.clip(_preds_train_best, 0.1, 60.0)
 
         fl_test = np.floor(dynamic_line).astype(int)
         fl_cal  = np.floor(dynamic_line_cal).astype(int)
