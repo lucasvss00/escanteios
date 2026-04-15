@@ -3326,6 +3326,17 @@ try:
                 _p90_te = _q90_wf.predict(Xte)
                 _p10_ca = _q10_wf.predict(Xca)
                 _p90_ca = _q90_wf.predict(Xca)
+
+                # CQR walk-forward: ajustar intervalos com conformity scores do cal
+                _wf_cqr_scores = np.maximum(_p10_ca - yca.values, yca.values - _p90_ca)
+                _wf_cqr_n = len(_wf_cqr_scores)
+                _wf_cqr_ql = min(np.ceil((_wf_cqr_n + 1) * 0.80) / _wf_cqr_n, 1.0)
+                _wf_cqr_adj = max(float(np.quantile(_wf_cqr_scores, _wf_cqr_ql)), 0.0)
+                _p10_te -= _wf_cqr_adj
+                _p90_te += _wf_cqr_adj
+                _p10_ca -= _wf_cqr_adj
+                _p90_ca += _wf_cqr_adj
+
                 sig_te = np.maximum(_p90_te - _p10_te, 1.5) / (2 * 1.28)
                 sig_ca = np.maximum(_p90_ca - _p10_ca, 1.5) / (2 * 1.28)
 
