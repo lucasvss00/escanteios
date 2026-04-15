@@ -2550,14 +2550,30 @@ try:
         p_poisson_cal  = np.array([1.0 - sp_poisson.cdf(fl, mu=max(m, 0.01))
                                    for fl, m in zip(fl_cal, preds_cal_c)])
 
-        # ---- (3) Negative Binomial ----
+        # ---- (3) Negative Binomial (per-game r via sigma heteroscedástico) ----
+        # r = mu² / (sigma² - mu), com sigma do quantile regression
+        # Fallback global para jogos onde sigma² <= mu
         _resid_var = float(np.mean((y_cal.values - preds_cal_c) ** 2))
         _mu_mean   = float(np.mean(preds_cal_c))
-        nb_r = float(np.clip(_mu_mean ** 2 / max(_resid_var - _mu_mean, 0.5), 0.5, 100.0))
-        p_nb_test = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
-                               for fl, m in zip(fl_test, preds_test_c)])
-        p_nb_cal  = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
-                               for fl, m in zip(fl_cal, preds_cal_c)])
+        nb_r_global = float(np.clip(_mu_mean ** 2 / max(_resid_var - _mu_mean, 0.5), 0.5, 100.0))
+
+        def _nb_per_game(fl_arr, mu_arr, sigma_arr, r_fallback):
+            """NegBinom P(over) com r per-game derivado do sigma heteroscedástico."""
+            probs = np.empty(len(mu_arr))
+            for i in range(len(mu_arr)):
+                m = max(float(mu_arr[i]), 0.01)
+                s2 = float(sigma_arr[i]) ** 2
+                if s2 > m:
+                    r = min(max(m ** 2 / (s2 - m), 0.5), 100.0)
+                else:
+                    r = r_fallback
+                p = r / (r + m)
+                probs[i] = 1.0 - sp_nbinom.cdf(int(fl_arr[i]), n=r, p=p)
+            return probs
+
+        nb_r = nb_r_global  # mantém referência para print
+        p_nb_test = _nb_per_game(fl_test, preds_test_c, sigma_het_test, nb_r_global)
+        p_nb_cal  = _nb_per_game(fl_cal,  preds_cal_c,  sigma_het_cal,  nb_r_global)
 
         # ---- (4) NGBoost LogNormal nativo ----
         p_ngb_test = None
