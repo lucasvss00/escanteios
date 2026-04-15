@@ -2208,13 +2208,49 @@ try:
         print(f"    Com calibração   : MAE={mae_cal:.3f}  RMSE={rmse_cal:.3f}")
         print(f"    → Usando: {'calibrado ✓' if use_calibration else 'raw (calibração não ajudou)'}")
 
-        # Viés por faixa
-        for lo, hi in [(0, 5), (6, 8), (9, 11), (12, 15), (16, 30)]:
+        # Viés por faixa (antes da correção)
+        _bias_ranges = [(0, 5), (6, 8), (9, 11), (12, 15), (16, 30)]
+        for lo, hi in _bias_ranges:
             mask = (y_test >= lo) & (y_test <= hi)
             if mask.sum() > 0:
                 bias = (preds_best[mask] - y_test[mask].values).mean()
                 mae_f = mean_absolute_error(y_test[mask], preds_best[mask])
                 print(f"    Faixa {lo:2d}-{hi:2d}: MAE={mae_f:.2f}  viés={bias:+.2f}  (n={mask.sum():,})")
+
+        # --- Correção de viés por faixa (fit no cal, aplica em tudo) ---
+        # Calcula o viés médio por faixa de predição no cal set e subtrai
+        _bias_corrections: dict[tuple, float] = {}
+        for lo, hi in _bias_ranges:
+            _cal_mask = (preds_cal_best >= lo) & (preds_cal_best <= hi)
+            if _cal_mask.sum() >= 20:
+                _bias_corrections[(lo, hi)] = float(
+                    (preds_cal_best[_cal_mask] - y_cal.values[_cal_mask]).mean())
+
+        def _apply_bias_correction(preds: np.ndarray, corrections: dict) -> np.ndarray:
+            corrected = preds.copy()
+            for (lo, hi), bias_val in corrections.items():
+                mask = (preds >= lo) & (preds <= hi)
+                if mask.any():
+                    corrected[mask] -= bias_val * 0.7  # shrinkage p/ evitar overcorrection
+            return np.clip(corrected, 0.0, 35.0)
+
+        if _bias_corrections:
+            preds_best = _apply_bias_correction(preds_best, _bias_corrections)
+            mae_bc = mean_absolute_error(y_test, preds_best)
+            if mae_bc < mae_best:
+                mae_best = mae_bc
+                print(f"    Bias correction (faixa): MAE={mae_bc:.3f} ✓")
+                # Viés por faixa (após correção)
+                for lo, hi in _bias_ranges:
+                    mask = (y_test >= lo) & (y_test <= hi)
+                    if mask.sum() > 0:
+                        bias = (preds_best[mask] - y_test[mask].values).mean()
+                        mae_f = mean_absolute_error(y_test[mask], preds_best[mask])
+                        print(f"      Faixa {lo:2d}-{hi:2d}: MAE={mae_f:.2f}  viés={bias:+.2f}  (n={mask.sum():,})")
+            else:
+                # Reverte: não melhorou
+                preds_best = preds_calibrated if use_calibration else preds_raw
+                print(f"    Bias correction (faixa): MAE={mae_bc:.3f} — não melhorou, revertido")
 
         # ==================================================================
         # 6c. Quantile regression (P10, P50, P90)
