@@ -1616,7 +1616,7 @@ try:
     if not _SKIP_NGBOOST:
         try:
             from ngboost import NGBRegressor
-            from ngboost.distns import Poisson as NGBPoisson
+            from ngboost.distns import LogNormal as NGBLogNormal
             from ngboost.scores import CRPScore
             _NGBOOST = True
         except ImportError:
