@@ -2508,7 +2508,7 @@ try:
         _preds_train_best = (calibrator.predict(_preds_train_raw) if use_calibration
                              else _preds_train_raw)
         # Aplica bias correction por faixa (se ativa) a cal e train também
-        if _bias_corrections and 'mae_bc' in dir() and mae_best == mae_bc:
+        if _bias_correction_active:
             preds_cal_best    = _apply_bias_correction(preds_cal_best, _bias_corrections)
             _preds_train_best = _apply_bias_correction(_preds_train_best, _bias_corrections)
         preds_cal_c     = np.clip(preds_cal_best, 0.1, 60.0)
