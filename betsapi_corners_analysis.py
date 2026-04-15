@@ -2219,12 +2219,13 @@ try:
 
         # --- Correção de viés por faixa (fit no cal, aplica em tudo) ---
         # Calcula o viés médio por faixa de predição no cal set e subtrai
+        _bc_cal_preds = calibrator.predict(preds_cal_raw) if use_calibration else preds_cal_raw
         _bias_corrections: dict[tuple, float] = {}
         for lo, hi in _bias_ranges:
-            _cal_mask = (preds_cal_best >= lo) & (preds_cal_best <= hi)
+            _cal_mask = (_bc_cal_preds >= lo) & (_bc_cal_preds <= hi)
             if _cal_mask.sum() >= 20:
                 _bias_corrections[(lo, hi)] = float(
-                    (preds_cal_best[_cal_mask] - y_cal.values[_cal_mask]).mean())
+                    (_bc_cal_preds[_cal_mask] - y_cal.values[_cal_mask]).mean())
 
         def _apply_bias_correction(preds: np.ndarray, corrections: dict) -> np.ndarray:
             corrected = preds.copy()
