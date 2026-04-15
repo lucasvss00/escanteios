@@ -2234,10 +2234,12 @@ try:
                     corrected[mask] -= bias_val * 0.7  # shrinkage p/ evitar overcorrection
             return np.clip(corrected, 0.0, 35.0)
 
+        _bias_correction_active = False
         if _bias_corrections:
             preds_best = _apply_bias_correction(preds_best, _bias_corrections)
             mae_bc = mean_absolute_error(y_test, preds_best)
             if mae_bc < mae_best:
+                _bias_correction_active = True
                 mae_best = mae_bc
                 print(f"    Bias correction (faixa): MAE={mae_bc:.3f} ✓")
                 # Viés por faixa (após correção)
