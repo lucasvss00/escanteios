@@ -2286,6 +2286,24 @@ try:
         p10_cal  = quantile_models["q10"].predict(X_cal)
         p90_cal  = quantile_models["q90"].predict(X_cal)
 
+        # --- Conformalized Quantile Regression (CQR) ---
+        # Ajusta intervalos P10-P90 para garantir cobertura marginal de ~80%
+        # Conformity scores no cal set: max(q10 - y, y - q90)
+        _cqr_scores = np.maximum(p10_cal - y_cal.values, y_cal.values - p90_cal)
+        _cqr_alpha = 0.20  # target: 80% coverage
+        _cqr_n = len(_cqr_scores)
+        _cqr_quantile_level = np.ceil((_cqr_n + 1) * (1 - _cqr_alpha)) / _cqr_n
+        _cqr_quantile_level = min(_cqr_quantile_level, 1.0)
+        _cqr_adjustment = float(np.quantile(_cqr_scores, _cqr_quantile_level))
+        _cqr_adjustment = max(_cqr_adjustment, 0.0)  # nunca encolher os intervalos
+
+        p10_test -= _cqr_adjustment
+        p90_test += _cqr_adjustment
+        p10_cal  -= _cqr_adjustment
+        p90_cal  += _cqr_adjustment
+        print(f"    CQR: ajuste={_cqr_adjustment:.2f} corners "
+              f"(intervalo expandido em ±{_cqr_adjustment:.2f})")
+
         # ==================================================================
         # 6c-bis. Modelos home/away separados (A/B vs single-total)
         #
