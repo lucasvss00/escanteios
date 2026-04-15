@@ -2706,7 +2706,7 @@ try:
             _crps_str = f"{crps_scores[mname]:.4f}" if mname in crps_scores else "     -"
             print(f"    {mname:<12s}  {bv:>10.4f}  {_crps_str:>10s}{mark}")
         if best_method == "NegBinom":
-            print(f"    (NegBinom r={nb_r:.2f})")
+            print(f"    (NegBinom r_global={nb_r:.2f}, per-game via sigma het.)")
 
         # ---- (e) Threshold selecionado no CAL set (sem leakage) ----
         # Over e Under avaliados separadamente; o melhor vence.
