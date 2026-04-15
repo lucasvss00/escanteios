@@ -3370,12 +3370,12 @@ try:
                         _wf_ngb_dist_ca = _wf_ngb.pred_dist(Xca.values)
                         try:
                             _wf_ngb_mu_te = np.clip(
-                                np.exp(_wf_ngb_dist_te.params["s"]
-                                       + _wf_ngb_dist_te.params["scale"]**2 / 2),
+                                _wf_ngb_dist_te.params["scale"]
+                                * np.exp(_wf_ngb_dist_te.params["s"]**2 / 2),
                                 0.01, 60.0)
                             _wf_ngb_mu_ca = np.clip(
-                                np.exp(_wf_ngb_dist_ca.params["s"]
-                                       + _wf_ngb_dist_ca.params["scale"]**2 / 2),
+                                _wf_ngb_dist_ca.params["scale"]
+                                * np.exp(_wf_ngb_dist_ca.params["s"]**2 / 2),
                                 0.01, 60.0)
                         except (KeyError, TypeError):
                             _wf_ngb_mu_te = np.clip(
