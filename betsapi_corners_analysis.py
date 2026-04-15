@@ -2508,7 +2508,7 @@ try:
             "XGBClf":   (p_clf_test,      p_clf_cal),
         }
         if p_ngb_test is not None:
-            methods["NGBPoisson"] = (p_ngb_test, p_ngb_cal)
+            methods["NGBLogNorm"] = (p_ngb_test, p_ngb_cal)
 
         brier_cal_scores = {
             name: float(np.mean((p_cal - over_actual_cal) ** 2))
@@ -2546,7 +2546,7 @@ try:
         crps_scores["Poisson"] = _crps_poisson(y_test.values, preds_test_c)
         # CRPS para NGBPoisson (usa NGBoost mu)
         if _ngb_mu_test is not None:
-            crps_scores["NGBPoisson"] = _crps_poisson(y_test.values, _ngb_mu_test)
+            crps_scores["NGBLogNorm"] = _crps_poisson(y_test.values, _ngb_mu_test)
 
         print(f"\n  Método probabilístico (seleção por Brier no cal set):")
         print(f"    {'Método':<12s}  {'Brier(cal)':>10s}  {'CRPS(test)':>10s}")
@@ -3323,7 +3323,7 @@ try:
                     "XGBClf": (pc_te, pc_ca),
                 }
                 if _wf_ngb_te is not None:
-                    _meths["NGBPoisson"] = (_wf_ngb_te, _wf_ngb_ca)
+                    _meths["NGBLogNorm"] = (_wf_ngb_te, _wf_ngb_ca)
 
                 _briers = {nm: float(np.mean((pcal - oa_ca) ** 2))
                            for nm, (_, pcal) in _meths.items()}
