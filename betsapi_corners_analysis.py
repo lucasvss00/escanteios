@@ -2710,8 +2710,27 @@ try:
 
         # ---- (e) Threshold selecionado no CAL set (sem leakage) ----
         # Over e Under avaliados separadamente; o melhor vence.
-        _THRESH_MAX  = 0.68
-        _MIN_CAL_BET = 30
+        # Stability filters: min bets elevado + min ROI no cal + concordância entre métodos
+        _THRESH_MAX   = 0.72   # permitir thresholds mais altos para maior sharpness
+        _MIN_CAL_BET  = 50     # exige mais apostas no cal para significância estatística
+        _MIN_CAL_ROI  = 0.05   # ROI mínimo de 5% no cal para aceitar uma direção
+
+        # --- Concordância entre métodos (stability check) ---
+        # Conta quantos métodos concordam sobre a melhor direção
+        _method_votes = {"Over": 0, "Under": 0}
+        for _mname, (_mte, _mca) in methods.items():
+            _mo_roi = float(np.mean((_mca >= 0.55).astype(float) * over_actual_cal
+                                     - (_mca >= 0.55).astype(float) * (1 - over_actual_cal)))
+            _mu_roi = float(np.mean(((1 - _mca) >= 0.55).astype(float) * (1 - over_actual_cal)
+                                     - ((1 - _mca) >= 0.55).astype(float) * over_actual_cal))
+            if _mo_roi > _mu_roi:
+                _method_votes["Over"] += 1
+            else:
+                _method_votes["Under"] += 1
+        _consensus_side = max(_method_votes, key=_method_votes.get)
+        _consensus_strength = _method_votes[_consensus_side] / max(sum(_method_votes.values()), 1)
+        print(f"    Consenso métodos: {_consensus_side} ({_method_votes[_consensus_side]}/"
+              f"{sum(_method_votes.values())} métodos, {_consensus_strength:.0%})")
 
         # -- Over: sweep threshold no cal --
         best_over_thresh = BREAKEVEN + MIN_EDGE
@@ -2741,20 +2760,33 @@ try:
                 best_under_roi    = _rc
                 best_under_thresh = _thr
 
-        # Decide a melhor direção (Over vs Under) pelo ROI do cal
-        if best_over_roi >= best_under_roi and best_over_roi > 0:
+        # Decide a melhor direção com filtros de estabilidade:
+        # 1. ROI mínimo no cal
+        # 2. Penaliza se a direção escolhida vai contra o consenso dos métodos
+        _over_ok  = best_over_roi  >= _MIN_CAL_ROI
+        _under_ok = best_under_roi >= _MIN_CAL_ROI
+
+        # Bonus de 3% ROI se alinhado com consenso dos métodos
+        _over_adj  = best_over_roi  + (0.03 if _consensus_side == "Over"  else 0.0)
+        _under_adj = best_under_roi + (0.03 if _consensus_side == "Under" else 0.0)
+
+        if _over_ok and _over_adj >= _under_adj:
             _bet_side    = "Over"
             best_thresh  = best_over_thresh
             best_roi_on_cal = best_over_roi
-        elif best_under_roi > 0:
+        elif _under_ok:
             _bet_side    = "Under"
             best_thresh  = best_under_thresh
             best_roi_on_cal = best_under_roi
-        else:
-            # Nenhum lado rentável: usa Over com threshold conservador
+        elif _over_ok:
             _bet_side    = "Over"
-            best_thresh  = BREAKEVEN + MIN_EDGE
+            best_thresh  = best_over_thresh
             best_roi_on_cal = best_over_roi
+        else:
+            # Nenhum lado rentável: usa consenso com threshold conservador
+            _bet_side    = _consensus_side
+            best_thresh  = BREAKEVEN + MIN_EDGE
+            best_roi_on_cal = max(best_over_roi, best_under_roi)
 
         # ---- (h) Odds reais por jogo ----
         odds_over_t  = X_test["corners_over_odds"].values  if "corners_over_odds"  in X_test.columns else None
