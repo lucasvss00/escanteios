@@ -3367,16 +3367,22 @@ try:
                 pp_ca = np.array([1.0 - sp_poisson.cdf(f, mu=max(m, 0.01))
                                   for f, m in zip(fl_ca, _pc_ca)])
 
-                # (3) NegBinom
+                # (3) NegBinom (per-game r via sigma heteroscedástico)
                 _rv = float(np.mean((yca.values - _pc_ca) ** 2))
                 _mm = float(np.mean(_pc_ca))
                 _nbr = float(np.clip(_mm ** 2 / max(_rv - _mm, 0.5), 0.5, 100.0))
-                pnb_te = np.array([
-                    1.0 - sp_nbinom.cdf(f, n=_nbr, p=_nbr / (_nbr + max(m, 0.01)))
-                    for f, m in zip(fl_te, _pc_te)])
-                pnb_ca = np.array([
-                    1.0 - sp_nbinom.cdf(f, n=_nbr, p=_nbr / (_nbr + max(m, 0.01)))
-                    for f, m in zip(fl_ca, _pc_ca)])
+
+                def _wf_nb_pg(fl_arr, mu_arr, sig_arr, r_fb):
+                    probs = np.empty(len(mu_arr))
+                    for i in range(len(mu_arr)):
+                        m = max(float(mu_arr[i]), 0.01)
+                        s2 = float(sig_arr[i]) ** 2
+                        r = min(max(m**2 / (s2 - m), 0.5), 100.0) if s2 > m else r_fb
+                        probs[i] = 1.0 - sp_nbinom.cdf(int(fl_arr[i]), n=r, p=r/(r+m))
+                    return probs
+
+                pnb_te = _wf_nb_pg(fl_te, _pc_te, sig_te, _nbr)
+                pnb_ca = _wf_nb_pg(fl_ca, _pc_ca, sig_ca, _nbr)
 
                 # (4) Logística multi-feature (fit no TRAIN)
                 def _wf_logfeat(pc, dl, X_df, min_):
