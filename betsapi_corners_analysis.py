@@ -2358,14 +2358,15 @@ try:
                 _ngb_dist_test = _ngb_model.pred_dist(X_test.values)
                 _ngb_dist_cal  = _ngb_model.pred_dist(X_cal.values)
 
-                # LogNormal: E[X] = exp(loc + scale²/2)
+                # LogNormal (scipy convention): s=shape(sigma), scale=exp(mu)
+                # E[X] = scale * exp(s²/2)
                 try:
-                    _ngb_loc_test  = _ngb_dist_test.params["s"]   # loc (log-space mean)
-                    _ngb_s_test    = _ngb_dist_test.params["scale"]  # scale (log-space std)
-                    _ngb_mu_test   = np.clip(np.exp(_ngb_loc_test + _ngb_s_test**2 / 2), 0.01, 60.0)
-                    _ngb_loc_cal   = _ngb_dist_cal.params["s"]
-                    _ngb_s_cal     = _ngb_dist_cal.params["scale"]
-                    _ngb_mu_cal    = np.clip(np.exp(_ngb_loc_cal + _ngb_s_cal**2 / 2), 0.01, 60.0)
+                    _ngb_s_test     = _ngb_dist_test.params["s"]       # sigma (log-space std)
+                    _ngb_scale_test = _ngb_dist_test.params["scale"]   # exp(mu)
+                    _ngb_mu_test    = np.clip(_ngb_scale_test * np.exp(_ngb_s_test**2 / 2), 0.01, 60.0)
+                    _ngb_s_cal      = _ngb_dist_cal.params["s"]
+                    _ngb_scale_cal  = _ngb_dist_cal.params["scale"]
+                    _ngb_mu_cal     = np.clip(_ngb_scale_cal * np.exp(_ngb_s_cal**2 / 2), 0.01, 60.0)
                 except (KeyError, TypeError):
                     # Fallback: usar .mean() que calcula E[X] internamente
                     _ngb_mu_test = np.clip(_ngb_dist_test.mean(), 0.01, 60.0)
