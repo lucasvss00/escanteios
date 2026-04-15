@@ -2544,7 +2544,7 @@ try:
         crps_scores["Normal"] = _crps_normal(y_test.values, preds_test_c, sigma_het_test)
         # CRPS para Poisson (usa XGBoost mean como mu)
         crps_scores["Poisson"] = _crps_poisson(y_test.values, preds_test_c)
-        # CRPS para NGBPoisson (usa NGBoost mu)
+        # CRPS para NGBLogNorm (usa NGBoost mu)
         if _ngb_mu_test is not None:
             crps_scores["NGBLogNorm"] = _crps_poisson(y_test.values, _ngb_mu_test)
 
