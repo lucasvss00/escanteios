@@ -1223,6 +1223,26 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     df["month"] = kickoff.dt.month
     df["is_weekend"] = (kickoff.dt.dayofweek >= 5).astype(int)
 
+    # --- Importância do jogo (proxy via fase da temporada) ---
+    # week_of_year: semanas 1-20 e 40-52 são tipicamente início/fim de
+    # temporada europeia (mais pressão por resultados). Semana 30-38 é
+    # off-season / pré-temporada em muitas ligas.
+    df["week_of_year"] = kickoff.dt.isocalendar().week.astype(float)
+    # Fase cíclica da temporada (seno/cosseno para capturar circularidade)
+    woy = df["week_of_year"].values
+    df["season_phase_sin"] = np.round(np.sin(2 * np.pi * woy / 52), 4)
+    df["season_phase_cos"] = np.round(np.cos(2 * np.pi * woy / 52), 4)
+    # Indicador de final de temporada europeia (abril-maio-junho = semanas ~14-24)
+    # e início (agosto-setembro = semanas ~31-39) — ambos com mais pressão
+    df["is_season_climax"] = ((woy >= 14) & (woy <= 24)).astype(int)
+    df["is_season_start"] = ((woy >= 31) & (woy <= 39)).astype(int)
+    # Score diff × late season = proxy de "jogo decisivo com placar apertado"
+    df["decisive_game_proxy"] = np.round(
+        df["is_season_climax"].values * np.abs(score_h - score_a + 0.01)**(-0.5), 4)
+    # Interação: empate no final da temporada → mais pressão por escanteios
+    df["climax_draw_pressure"] = np.round(
+        df["is_season_climax"].values * is_draw * time_frac * da_last5, 4)
+
     # --- Targets ---
     ct_final = df.get("corners_total", pd.Series(np.nan, index=df.index)).values
     df["target_corners_total"] = ct_final
