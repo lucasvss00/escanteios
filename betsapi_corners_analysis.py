@@ -3275,28 +3275,33 @@ try:
                 else:
                     pc_te, pc_ca = pn_te.copy(), pn_ca.copy()
 
-                # (6) NGBoost Poisson walk-forward
+                # (6) NGBoost LogNormal walk-forward
                 _wf_ngb_te, _wf_ngb_ca = None, None
                 if _NGBOOST:
                     try:
                         _wf_ngb = NGBRegressor(
-                            Dist=NGBPoisson, Score=CRPScore,
+                            Dist=NGBLogNormal, Score=CRPScore,
                             n_estimators=500, learning_rate=0.03,
                             minibatch_frac=0.8, verbose=False,
                             random_state=42, natural_gradient=True,
                         )
                         _wf_ngb.fit(
-                            Xtr.values, ytr.values.astype(int),
-                            X_val=Xca.values, Y_val=yca.values.astype(int),
+                            Xtr.values, np.maximum(ytr.values.astype(float), 0.5),
+                            X_val=Xca.values,
+                            Y_val=np.maximum(yca.values.astype(float), 0.5),
                             early_stopping_rounds=30,
                         )
                         _wf_ngb_dist_te = _wf_ngb.pred_dist(Xte.values)
                         _wf_ngb_dist_ca = _wf_ngb.pred_dist(Xca.values)
                         try:
                             _wf_ngb_mu_te = np.clip(
-                                _wf_ngb_dist_te.params["mu"], 0.01, 60.0)
+                                np.exp(_wf_ngb_dist_te.params["s"]
+                                       + _wf_ngb_dist_te.params["scale"]**2 / 2),
+                                0.01, 60.0)
                             _wf_ngb_mu_ca = np.clip(
-                                _wf_ngb_dist_ca.params["mu"], 0.01, 60.0)
+                                np.exp(_wf_ngb_dist_ca.params["s"]
+                                       + _wf_ngb_dist_ca.params["scale"]**2 / 2),
+                                0.01, 60.0)
                         except (KeyError, TypeError):
                             _wf_ngb_mu_te = np.clip(
                                 _wf_ngb_dist_te.mean(), 0.01, 60.0)
