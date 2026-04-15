@@ -2244,11 +2244,13 @@ try:
             print(f"\n  (split home/away falhou: {_e})")
 
         # ==================================================================
-        # 6c-ngb. NGBoost com distribuição Poisson (CRPS nativo)
+        # 6c-ngb. NGBoost com distribuição LogNormal (CRPS nativo)
         #
-        # Aprende a distribuição diretamente, otimizando CRPS em vez de
-        # squared error. A distribuição Poisson é natural para contagens
-        # (escanteios). O mu previsto é usado como 6º método probabilístico.
+        # LogNormal é nativamente compatível com CRPScore no NGBoost
+        # (ao contrário da Poisson que falha). LogNormal também modela
+        # melhor a sobredispersão típica de contagens de escanteios.
+        # O valor esperado E[X] = exp(loc + scale²/2) é usado como
+        # predição pontual e como mu para o método probabilístico.
         # ==================================================================
         _ngb_model = None
         _ngb_mu_test = None
@@ -2258,8 +2260,12 @@ try:
 
         if _NGBOOST:
             try:
+                # LogNormal precisa de target > 0; adicionar 0.5 para jogos com 0 corners
+                _y_train_ngb = np.maximum(y_train.values.astype(float), 0.5)
+                _y_cal_ngb   = np.maximum(y_cal.values.astype(float), 0.5)
+
                 _ngb_model = NGBRegressor(
-                    Dist=NGBPoisson,
+                    Dist=NGBLogNormal,
                     Score=CRPScore,
                     n_estimators=500,
                     learning_rate=0.03,
@@ -2269,26 +2275,31 @@ try:
                     natural_gradient=True,
                 )
                 _ngb_model.fit(
-                    X_train.values, y_train.values.astype(int),
-                    X_val=X_cal.values, Y_val=y_cal.values.astype(int),
+                    X_train.values, _y_train_ngb,
+                    X_val=X_cal.values, Y_val=_y_cal_ngb,
                     early_stopping_rounds=30,
                 )
 
-                # Extrair mu (taxa Poisson prevista)
+                # Extrair predição pontual E[X] da LogNormal
                 _ngb_dist_test = _ngb_model.pred_dist(X_test.values)
                 _ngb_dist_cal  = _ngb_model.pred_dist(X_cal.values)
 
-                # Acesso ao parâmetro mu — compatível com ngboost >= 0.5
+                # LogNormal: E[X] = exp(loc + scale²/2)
                 try:
-                    _ngb_mu_test = np.clip(_ngb_dist_test.params["mu"], 0.01, 60.0)
-                    _ngb_mu_cal  = np.clip(_ngb_dist_cal.params["mu"],  0.01, 60.0)
+                    _ngb_loc_test  = _ngb_dist_test.params["s"]   # loc (log-space mean)
+                    _ngb_s_test    = _ngb_dist_test.params["scale"]  # scale (log-space std)
+                    _ngb_mu_test   = np.clip(np.exp(_ngb_loc_test + _ngb_s_test**2 / 2), 0.01, 60.0)
+                    _ngb_loc_cal   = _ngb_dist_cal.params["s"]
+                    _ngb_s_cal     = _ngb_dist_cal.params["scale"]
+                    _ngb_mu_cal    = np.clip(np.exp(_ngb_loc_cal + _ngb_s_cal**2 / 2), 0.01, 60.0)
                 except (KeyError, TypeError):
+                    # Fallback: usar .mean() que calcula E[X] internamente
                     _ngb_mu_test = np.clip(_ngb_dist_test.mean(), 0.01, 60.0)
                     _ngb_mu_cal  = np.clip(_ngb_dist_cal.mean(),  0.01, 60.0)
 
                 _ngb_mae = float(mean_absolute_error(y_test, _ngb_mu_test))
 
-                # CRPS numérico para Poisson
+                # CRPS numérico: usar Poisson com mu = E[X] da LogNormal
                 _crps_vals = []
                 for _yi, _mui in zip(y_test.values, _ngb_mu_test):
                     _k_max = int(max(_mui * 3, _yi * 2, 30))
@@ -2298,7 +2309,7 @@ try:
                     _crps_vals.append(float(np.sum((_cdf - _ind) ** 2)))
                 _ngb_crps = float(np.mean(_crps_vals))
 
-                print(f"\n  NGBoost (Poisson, CRPScore):")
+                print(f"\n  NGBoost (LogNormal, CRPScore):")
                 print(f"    MAE: {_ngb_mae:.3f}  (vs XGBoost: {mae_best:.3f})")
                 print(f"    CRPS (test): {_ngb_crps:.4f}")
 
