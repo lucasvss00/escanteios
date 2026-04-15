@@ -1880,6 +1880,18 @@ try:
         "expected_corners_5min", "corners_vs_expected_5",
         "relative_pace", "pace_acceleration",
         "late_game_pressure", "urgency_factor", "draw_pressure",
+        # Importância do jogo (fase da temporada)
+        "week_of_year",
+        "season_phase_sin", "season_phase_cos",
+        "is_season_climax", "is_season_start",
+        "decisive_game_proxy", "climax_draw_pressure",
+        # Autocorrelação e sequência temporal
+        "corner_rate_variance",
+        "unconverted_pressure",
+        "recent_conversion_efficiency",
+        "corner_jerk",
+        "corner_burstiness",
+        "building_pressure_no_corner",
     ]
 
     # Features de momentum (só disponíveis para minutos > 15)
