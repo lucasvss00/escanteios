@@ -2424,7 +2424,7 @@ try:
         p_nb_cal  = np.array([1.0 - sp_nbinom.cdf(fl, n=nb_r, p=nb_r / (nb_r + max(m, 0.01)))
                                for fl, m in zip(fl_cal, preds_cal_c)])
 
-        # ---- (4) NGBoost Poisson nativo ----
+        # ---- (4) NGBoost LogNormal nativo ----
         p_ngb_test = None
         p_ngb_cal  = None
         if _ngb_model is not None and _ngb_mu_test is not None:
