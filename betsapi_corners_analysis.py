@@ -3531,35 +3531,53 @@ try:
                 po_te = _meths[_bm][0]
                 po_ca = _meths[_bm][1]
 
-                # --- Threshold (Over e Under no cal) ---
+                # --- Threshold (Over e Under no cal) com stability filters ---
                 _BE = 1.0 / ODDS_OVER
+                _WF_THRESH_MAX = 0.72
+                _WF_MIN_CAL_BET = 50
+                _WF_MIN_CAL_ROI = 0.05
                 _best_ot, _best_or = _BE + MIN_EDGE, -999.0
                 _best_ut, _best_ur = _BE + MIN_EDGE, -999.0
                 _pu_ca = 1.0 - po_ca
                 _ua_ca = 1 - oa_ca
 
-                for _thr in np.arange(_BE + MIN_EDGE, _THRESH_MAX + 0.001, 0.01):
+                for _thr in np.arange(_BE + MIN_EDGE, _WF_THRESH_MAX + 0.001, 0.01):
                     # Over
                     _mo = po_ca >= _thr
-                    if _mo.sum() >= _MIN_CAL_BET:
+                    if _mo.sum() >= _WF_MIN_CAL_BET:
                         _wo = oa_ca[_mo].sum()
                         _ro = (_wo * (ODDS_OVER - 1) - (_mo.sum() - _wo)) / _mo.sum()
                         if _ro > _best_or:
                             _best_or, _best_ot = _ro, _thr
                     # Under
                     _mu = _pu_ca >= _thr
-                    if _mu.sum() >= _MIN_CAL_BET:
+                    if _mu.sum() >= _WF_MIN_CAL_BET:
                         _wu = _ua_ca[_mu].sum()
                         _ru = (_wu * (ODDS_UNDER - 1) - (_mu.sum() - _wu)) / _mu.sum()
                         if _ru > _best_ur:
                             _best_ur, _best_ut = _ru, _thr
 
-                if _best_or >= _best_ur and _best_or > 0:
+                # Consenso dos métodos (walk-forward)
+                _wf_votes = {"Over": 0, "Under": 0}
+                for _mn, (_mte, _mca) in _meths.items():
+                    _wf_mo = float(np.mean((_mca >= 0.55) * oa_ca - (_mca >= 0.55) * (1 - oa_ca)))
+                    _wf_mu = float(np.mean(((1-_mca) >= 0.55) * (1-oa_ca) - ((1-_mca) >= 0.55) * oa_ca))
+                    _wf_votes["Over" if _wf_mo > _wf_mu else "Under"] += 1
+                _wf_consensus = max(_wf_votes, key=_wf_votes.get)
+
+                _wf_over_ok  = _best_or >= _WF_MIN_CAL_ROI
+                _wf_under_ok = _best_ur >= _WF_MIN_CAL_ROI
+                _wf_over_adj  = _best_or + (0.03 if _wf_consensus == "Over" else 0.0)
+                _wf_under_adj = _best_ur + (0.03 if _wf_consensus == "Under" else 0.0)
+
+                if _wf_over_ok and _wf_over_adj >= _wf_under_adj:
                     _side, _thresh = "Over", _best_ot
-                elif _best_ur > 0:
+                elif _wf_under_ok:
                     _side, _thresh = "Under", _best_ut
+                elif _wf_over_ok:
+                    _side, _thresh = "Over", _best_ot
                 else:
-                    _side, _thresh = "Over", _BE + MIN_EDGE
+                    _side, _thresh = _wf_consensus, _BE + MIN_EDGE
 
                 # --- Aplica ao teste ---
                 _pu_te = 1.0 - po_te
