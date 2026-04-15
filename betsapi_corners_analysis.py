@@ -1258,6 +1258,48 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     df["target_corners_away_final"] = ca_final
 
     # ------------------------------------------------------------------
+    # 2b. Autocorrelação e features de sequência temporal
+    #
+    # Capturam padrões como "pressão crescente sem conversão em escanteio"
+    # e regularidade/irregularidade na chegada de escanteios.
+    # ------------------------------------------------------------------
+    # Variância do ritmo de escanteios entre janelas (proxy de autocorrelação)
+    # Se rate_5 ≈ rate_10 ≈ rate_total → jogo constante; se divergem → instável
+    rate_total = c_total / np.maximum(snap_min_v, 1)
+    rate_5 = corners_last_5 / 5
+    rate_10 = corners_last_10 / 10
+    df["corner_rate_variance"] = np.round(
+        np.var(np.column_stack([rate_total, rate_5, rate_10]), axis=1), 4)
+
+    # Pressão acumulada sem conversão: ataques perigosos sem escanteio recente
+    # Alto = "panela de pressão" — escanteio iminente
+    df["unconverted_pressure"] = np.round(
+        da_last5 * np.minimum(tslc, 15) / 15, 4)
+
+    # Razão entre escanteios recentes e pressão recente — "eficiência de conversão"
+    # Se corners_last_5 = 0 mas da_last5 é alto → pressão represada
+    df["recent_conversion_efficiency"] = np.round(
+        corners_last_5 / (da_last5 + 1), 4)
+
+    # Aceleração de segunda ordem: mudança na aceleração de escanteios
+    # (corners_last_5 vs anterior) — captura inflexão de tendência
+    c_5_10 = corners_last_5 - (corners_last_10 - corners_last_5)  # accel atual
+    c_10_15 = (corners_last_10 - corners_last_5) - (corners_last_15 - corners_last_10)  # accel anterior
+    df["corner_jerk"] = np.round(c_5_10 - c_10_15, 4)
+
+    # Burstiness: coeficiente de variação do inter-corner time (proxy)
+    # Jogos com escanteios espaçados uniformemente → baixo; em clusters → alto
+    avg_gap = snap_min_v / np.maximum(c_total, 1)
+    recent_gap = 5 / np.maximum(corners_last_5, 0.5)
+    df["corner_burstiness"] = np.round(
+        np.abs(recent_gap - avg_gap) / np.maximum(avg_gap, 1), 4)
+
+    # Pressão crescente sequencial: da_last5 > da_last10/2 e corners_last_5 == 0
+    df["building_pressure_no_corner"] = (
+        (da_last5 > (da_last10 - da_last5)) & (corners_last_5 == 0)
+    ).astype(int)
+
+    # ------------------------------------------------------------------
     # 3. Momentum deltas (entre snapshots consecutivos do mesmo jogo)
     # ------------------------------------------------------------------
     MOMENTUM_COLS = [
