@@ -1099,6 +1099,20 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     df["is_low_regime_high_corners"] = (
         (game_regime == 0) & (c_total > exp_at_min_r * 1.5)).astype(int)
 
+    # --- League pace cluster ---
+    # 0 = LOW  (<8.5 avg/jogo  — ex: mediterrâneas: Serie A, La Liga)
+    # 1 = MED  (8.5–11.0       — ex: Premier League, Bundesliga)
+    # 2 = HIGH (>11.0           — ex: ligas asiáticas, escandinavas)
+    league_avg_safe = np.where(np.isnan(league_avg_v), 9.0, league_avg_v)
+    league_cluster = np.where(league_avg_safe < 8.5, 0,
+                    np.where(league_avg_safe <= 11.0, 1, 2)).astype(int)
+    df["league_cluster"] = league_cluster
+    # Interações: cluster amplifica ou atenua o sinal de ritmo atual
+    df["cluster_x_corners_rate"] = np.round(league_cluster.astype(float) * c_rate, 4)
+    df["cluster_x_regime"] = (league_cluster * game_regime).astype(int)
+    df["cluster_x_hist_rate_ratio"] = np.round(
+        league_cluster.astype(float) * df["hist_actual_rate_ratio"].values, 4)
+
     # --- Dominância ofensiva ---
     df["dangerous_dominance"] = da_h - da_a
     df["corner_dominance"] = c_home - c_away
