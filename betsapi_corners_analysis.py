@@ -974,6 +974,29 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
         np.round(df["corners_rate_last_10"].values / np.maximum(first_half_rate, 0.01), 4),
         np.nan)
 
+    # Ritmo da 2ª metade relativo ao histórico do time (do/contra times específicos)
+    hist_sh_h = df.get("hist_home_second_half_corners_avg",
+                       pd.Series(np.nan, index=df.index)).values.astype(float)
+    hist_sh_a = df.get("hist_away_second_half_corners_avg",
+                       pd.Series(np.nan, index=df.index)).values.astype(float)
+    # Ritmo histórico esperado por minuto de 2T (45 min)
+    hist_sh_rate_h = hist_sh_h / 45.0
+    hist_sh_rate_a = hist_sh_a / 45.0
+    # Ritmo 2T atual vs ritmo histórico esperado do time da casa
+    df["sh_pace_vs_hist_home"] = np.where(
+        is_2nd_half & ~np.isnan(hist_sh_h),
+        np.round(second_half_rate / np.maximum(hist_sh_rate_h, 0.01), 4), np.nan)
+    # Ritmo 2T atual vs ritmo histórico esperado do visitante
+    df["sh_pace_vs_hist_away"] = np.where(
+        is_2nd_half & ~np.isnan(hist_sh_a),
+        np.round(second_half_rate / np.maximum(hist_sh_rate_a, 0.01), 4), np.nan)
+    # Escanteios 2T acima/abaixo do esperado combinado (em unidades de corners)
+    hist_sh_combined = np.where(np.isnan(hist_sh_h), 0, hist_sh_h) + \
+                       np.where(np.isnan(hist_sh_a), 0, hist_sh_a)
+    df["sh_above_hist"] = np.where(
+        is_2nd_half & ~np.isnan(hist_sh_h) & ~np.isnan(hist_sh_a),
+        np.round(second_half_so_far - hist_sh_combined * mins_2nd / 45.0, 4), np.nan)
+
     # --- Additional features ---
     poss_h = df.get("possession_home_avg", pd.Series(np.nan, index=df.index)).values.astype(float)
     poss_a = df.get("possession_away_avg", pd.Series(np.nan, index=df.index)).values.astype(float)
