@@ -156,6 +156,16 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
         feat[f"{prefix}_corners_std_last10"] = (
             round(float(np.std(last10)), 2) if len(last10) >= 2 else None)
 
+        # Média de escanteios no 2º tempo (corners_total − corners_ht_total)
+        sh_vals = []
+        for h in hist:
+            ct = h.get("corners_total")
+            cht = h.get("corners_ht_total")
+            if ct is not None and cht is not None:
+                sh_vals.append(float(ct) - float(cht))
+        feat[f"{prefix}_second_half_corners_avg"] = (
+            round(np.mean(sh_vals), 2) if sh_vals else None)
+
     _null_extras = [
         "corners_last5_avg", "corners_last10_avg", "corners_std_last10",
         "second_half_corners_avg",
