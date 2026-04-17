@@ -1051,6 +1051,21 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     df["urgency_index"] = is_losing * (90 - snap_min_v)
     df["urgency_weighted"] = np.round(is_losing / np.maximum(90 - snap_min_v, 1), 4)
 
+    # Urgência não-linear: perdendo por 2+ gols — pressão máxima por escanteios
+    # score_diff ≥ 2 gera comportamento qualitativamente diferente de ≥ 1
+    score_diff_abs = np.abs(score_h - score_a)
+    remaining_v = (90 - snap_min_v).astype(float)
+    df["is_losing_big"] = (score_diff_abs >= 2).astype(int)
+    df["losing_big_urgency"] = np.round(
+        (score_diff_abs >= 2).astype(float) * remaining_v, 4)
+    df["score_diff_sq"] = score_diff_abs.astype(float) ** 2
+    # Perdendo por 2+ E alto ritmo recente de escanteios → pressão máxima convertida
+    df["comeback_pressure_strong"] = np.round(
+        (score_diff_abs >= 2).astype(float)
+        * df["corners_rate_last_10"].values, 4)
+    # Interação: placar invertido × fase do jogo (late game com déficit é mais urgente)
+    df["deficit_x_time"] = np.round(score_diff_abs.astype(float) * snap_min_v / 90, 4)
+
     # Pressure acceleration
     avg_att_rate = total_attacks / np.maximum(snap_min_v, 1)
     df["pressure_acceleration"] = np.round(
