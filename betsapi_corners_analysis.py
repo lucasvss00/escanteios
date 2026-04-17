@@ -228,6 +228,7 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
 
         # Atualiza histórico: time da casa jogou em casa
         game_stats = {col: row.get(col) for col in stat_cols}
+        game_stats["corners_ht_total"] = row.get("corners_ht_total")
         game_stats["_is_home"] = True
         team_history.setdefault(home_id, []).append(game_stats)
 
