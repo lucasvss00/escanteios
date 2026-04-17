@@ -158,6 +158,7 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
 
     _null_extras = [
         "corners_last5_avg", "corners_last10_avg", "corners_std_last10",
+        "second_half_corners_avg",
     ]
 
     for _, row in df.iterrows():
