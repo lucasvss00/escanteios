@@ -3055,13 +3055,15 @@ try:
                             _ngb_model = _ngb_red
                             _ngb_dist_red = _ngb_model.pred_dist(X_test_red.values)
                             try:
+                                # LogNormal mean = scale * exp(s² / 2)
+                                # onde scale = exp(mu) é a mediana e s é o desvio log
                                 _ngb_mu_test = np.clip(
-                                    np.exp(_ngb_dist_red.params["s"]
-                                           + _ngb_dist_red.params["scale"]**2 / 2),
-                                    0.01, 60.0)
+                                    _ngb_dist_red.params["scale"]
+                                    * np.exp(_ngb_dist_red.params["s"]**2 / 2),
+                                    0.01, 35.0)
                             except (KeyError, TypeError):
                                 _ngb_mu_test = np.clip(
-                                    _ngb_dist_red.mean(), 0.01, 60.0)
+                                    _ngb_dist_red.mean(), 0.01, 35.0)
                             _ngb_mae = float(mean_absolute_error(y_test, _ngb_mu_test))
                             print(f"    NGBoost retreinado no subset: MAE {_ngb_mae:.4f}")
                         except Exception as _e:
