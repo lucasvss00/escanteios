@@ -3770,11 +3770,32 @@ try:
             _nonzero_rois = [r for r in wf_fold_rois if r != 0.0]
             roi_std = float(np.std(_nonzero_rois)) if len(_nonzero_rois) >= 2 else 0.0
 
+            # --- Bootstrap CI (90%) no ROI agregado ---
+            # Reamosta apostas individuais (1=acerto, 0=erro) 2000 vezes para
+            # estimar o intervalo de confiança sem assumir normalidade.
+            if wf_total_bets >= 10:
+                _rng_bs = np.random.default_rng(42)
+                _outcomes_bs = np.array(
+                    [1.0] * wf_total_wins + [0.0] * (wf_total_bets - wf_total_wins))
+                _bs_sample_rois: list[float] = []
+                for _ in range(2000):
+                    _s = _rng_bs.choice(_outcomes_bs, size=wf_total_bets, replace=True)
+                    _w_s = _s.sum()
+                    _bs_sample_rois.append(
+                        (_w_s * (ODDS_OVER - 1) - (wf_total_bets - _w_s)) / wf_total_bets)
+                _bs_arr = np.array(_bs_sample_rois)
+                roi_ci_low  = float(np.percentile(_bs_arr, 5))
+                roi_ci_high = float(np.percentile(_bs_arr, 95))
+            else:
+                roi_ci_low = roi_ci_high = agg_roi
+
             wf_summary[snap_min] = {
                 "total_bets": wf_total_bets,
                 "accuracy": round(agg_acc, 4),
                 "roi": round(agg_roi, 4),
                 "roi_std": round(roi_std, 4),
+                "roi_ci_low":  round(roi_ci_low,  4),
+                "roi_ci_high": round(roi_ci_high, 4),
                 "fold_rois": [round(r, 4) for r in wf_fold_rois],
                 "mae_avg": round(agg_mae, 4),
                 "n_folds": len(wf_fold_maes),
@@ -3782,6 +3803,7 @@ try:
 
             print(f"\n    Agregado min {snap_min}: apostas={wf_total_bets:,}  "
                   f"acur={agg_acc:.1%}  ROI={agg_roi:+.1%}  "
+                  f"IC90%=[{roi_ci_low:+.1%}, {roi_ci_high:+.1%}]  "
                   f"MAE={agg_mae:.3f}  ROI std={roi_std:.1%}")
 
         # --- Tabela resumo Walk-Forward ---
