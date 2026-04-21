@@ -2844,32 +2844,42 @@ try:
               f"{sum(_method_votes.values())} métodos, {_consensus_strength:.0%})")
 
         # -- Over: sweep threshold no cal --
+        # Critério primário: menor threshold com ROI≥15% e n_bets≥200 (mais robusto)
+        # Fallback: maior ROI com n_bets≥50 (critério anterior)
         best_over_thresh = BREAKEVEN + MIN_EDGE
         best_over_roi    = -999.0
+        _robust_over_found = False
         for _thr in np.arange(BREAKEVEN + MIN_EDGE, _THRESH_MAX + 0.001, 0.01):
             _mc = p_over_cal >= _thr
-            if _mc.sum() < _MIN_CAL_BET:
+            _nc = int(_mc.sum())
+            if _nc < _MIN_CAL_BET:
                 continue
             _wc = over_actual_cal[_mc].sum()
-            _rc = (_wc * (ODDS_OVER - 1) - (_mc.sum() - _wc)) / _mc.sum()
-            if _rc > best_over_roi:
-                best_over_roi    = _rc
-                best_over_thresh = _thr
+            _rc = (_wc * (ODDS_OVER - 1) - (_nc - _wc)) / _nc
+            if not _robust_over_found and _nc >= _ROBUST_MIN_BETS and _rc >= _ROBUST_MIN_ROI:
+                best_over_roi, best_over_thresh = _rc, _thr
+                _robust_over_found = True
+            if not _robust_over_found and _rc > best_over_roi:
+                best_over_roi, best_over_thresh = _rc, _thr
 
         # -- Under: sweep threshold no cal --
         p_under_cal = 1.0 - p_over_cal
         under_actual_cal = 1 - over_actual_cal
         best_under_thresh = BREAKEVEN + MIN_EDGE
         best_under_roi    = -999.0
+        _robust_under_found = False
         for _thr in np.arange(BREAKEVEN + MIN_EDGE, _THRESH_MAX + 0.001, 0.01):
             _mc = p_under_cal >= _thr
-            if _mc.sum() < _MIN_CAL_BET:
+            _nc = int(_mc.sum())
+            if _nc < _MIN_CAL_BET:
                 continue
             _wc = under_actual_cal[_mc].sum()
-            _rc = (_wc * (ODDS_UNDER - 1) - (_mc.sum() - _wc)) / _mc.sum()
-            if _rc > best_under_roi:
-                best_under_roi    = _rc
-                best_under_thresh = _thr
+            _rc = (_wc * (ODDS_UNDER - 1) - (_nc - _wc)) / _nc
+            if not _robust_under_found and _nc >= _ROBUST_MIN_BETS and _rc >= _ROBUST_MIN_ROI:
+                best_under_roi, best_under_thresh = _rc, _thr
+                _robust_under_found = True
+            if not _robust_under_found and _rc > best_under_roi:
+                best_under_roi, best_under_thresh = _rc, _thr
 
         # Decide a melhor direção com filtros de estabilidade:
         # 1. ROI mínimo no cal
