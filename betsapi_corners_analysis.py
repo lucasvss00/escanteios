@@ -3095,6 +3095,21 @@ try:
                 }).fillna(0).sort_values("shap_abs_mean", ascending=False)
                 _ranking.to_csv(DATA_DIR / f"feature_ranking_min{snap_min}.csv")
 
+                # --- SHAP .txt legível por minuto ---
+                _txt_path = DATA_DIR / f"shap_features_min{snap_min}.txt"
+                with open(_txt_path, "w", encoding="utf-8") as _tf:
+                    _tf.write(f"SHAP Feature Ranking — Minuto {snap_min}\n")
+                    _tf.write(f"{'='*60}\n")
+                    _tf.write(f"{'#':<4} {'Feature':<44} {'SHAP':>8}  {'Perm':>8}\n")
+                    _tf.write(f"{'-'*68}\n")
+                    for _rank, (_feat, _row) in enumerate(_ranking.iterrows(), 1):
+                        _tf.write(
+                            f"{_rank:<4} {_feat:<44} "
+                            f"{_row['shap_abs_mean']:>8.4f}  "
+                            f"{_row['permutation']:>+8.4f}\n"
+                        )
+                    _tf.write(f"\nTotal features: {len(_ranking)}\n")
+
                 print(f"\n  Top 10 features (SHAP):")
                 for i, (feat, row_r) in enumerate(_ranking.head(10).iterrows(), 1):
                     print(f"    {i:2d}. {feat:<42s} shap={row_r['shap_abs_mean']:.4f}  "
