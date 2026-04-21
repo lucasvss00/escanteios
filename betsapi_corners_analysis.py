@@ -1990,6 +1990,16 @@ try:
         "corner_jerk",
         "corner_burstiness",
         "building_pressure_no_corner",
+        # Ritmo recente vs total + aceleração vs global
+        "att_rate_short_vs_total", "da_rate_short_vs_total",
+        "att_acceleration_vs_global", "da_acceleration_vs_global",
+        # Contexto: perdendo × ritmo/aceleração
+        "losing_x_high_pace", "losing_x_acceleration",
+        # Tempo × aceleração
+        "remaining_x_acceleration",
+        # Projeção implícita (ritmo recente × minutos restantes)
+        "projected_corners_rate5", "projected_corners_rate10",
+        "projected_da_remaining",
     ]
 
     # Features de momentum (só disponíveis para minutos > 15)
