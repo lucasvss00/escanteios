@@ -2820,9 +2820,11 @@ try:
         # ---- (e) Threshold selecionado no CAL set (sem leakage) ----
         # Over e Under avaliados separadamente; o melhor vence.
         # Stability filters: min bets elevado + min ROI no cal + concordância entre métodos
-        _THRESH_MAX   = 0.72   # permitir thresholds mais altos para maior sharpness
-        _MIN_CAL_BET  = 50     # exige mais apostas no cal para significância estatística
-        _MIN_CAL_ROI  = 0.05   # ROI mínimo de 5% no cal para aceitar uma direção
+        _THRESH_MAX      = 0.72   # permitir thresholds mais altos para maior sharpness
+        _MIN_CAL_BET     = 50     # fallback: min apostas no cal para critério max-ROI
+        _MIN_CAL_ROI     = 0.05   # fallback: ROI mínimo de 5% no cal para aceitar direção
+        _ROBUST_MIN_ROI  = 0.15   # critério robusto: ROI alvo mínimo
+        _ROBUST_MIN_BETS = 200    # critério robusto: apostas mínimas no cal
 
         # --- Concordância entre métodos (stability check) ---
         # Conta quantos métodos concordam sobre a melhor direção
