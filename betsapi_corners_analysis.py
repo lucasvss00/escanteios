@@ -881,6 +881,11 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     df["no_corner_yet"] = (c_total == 0).astype(int)
     df["early_corner_surge"] = np.round(c_total / np.maximum(snap_min_v / 15, 1), 4)
 
+    # Flag de amostra pequena: time com menos de 10 jogos no histórico → encoding fraco
+    _hg_h = df.get("hist_home_games", pd.Series(0, index=df.index)).fillna(0).values
+    _hg_a = df.get("hist_away_games", pd.Series(0, index=df.index)).fillna(0).values
+    df["low_data_flag"] = (((_hg_h < 10) | (_hg_a < 10))).astype(int)
+
     # First corner speed
     _fcm = df.get("_first_corner_min", pd.Series(np.nan, index=df.index)).values.astype(float)
     df["first_corner_speed"] = np.where(
