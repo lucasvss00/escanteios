@@ -1364,6 +1364,40 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     ).astype(int)
 
     # ------------------------------------------------------------------
+    # 2c. Ritmo recente, aceleração vs global e projeção implícita
+    # ------------------------------------------------------------------
+
+    # Tópico 1 — Ritmo recente vs ritmo total do jogo (ratio)
+    att_rate_total_v = total_attacks / np.maximum(snap_min_v, 1)
+    da_rate_total_v  = total_dangerous / np.maximum(snap_min_v, 1)
+    df["att_rate_short_vs_total"] = np.round(
+        (att_last5 / 5) / np.maximum(att_rate_total_v, 0.01), 4)
+    df["da_rate_short_vs_total"] = np.round(
+        (da_last5 / 5) / np.maximum(da_rate_total_v, 0.01), 4)
+
+    # Tópico 2 — Aceleração vs média global (não vs janela anterior)
+    df["att_acceleration_vs_global"] = np.round(
+        (att_last5 / 5) - att_rate_total_v, 4)
+    df["da_acceleration_vs_global"] = np.round(
+        (da_last5 / 5) - da_rate_total_v, 4)
+
+    # Tópico 3 — Contexto: perdendo × ritmo alto / aceleração
+    is_losing_v = (score_diff_abs > 0).astype(float)
+    df["losing_x_high_pace"] = np.round(
+        is_losing_v * df["is_high_pace"].values, 4)
+    df["losing_x_acceleration"] = np.round(
+        is_losing_v * np.maximum(2 * corners_last_5 - corners_last_10, 0), 4)
+
+    # Tópico 4 — Tempo × aceleração (interação explícita)
+    df["remaining_x_acceleration"] = np.round(
+        remaining_v * np.maximum(2 * corners_last_5 - corners_last_10, 0), 4)
+
+    # Tópico 5 — Projeção implícita: taxa recente × minutos restantes
+    df["projected_corners_rate5"]  = np.round((corners_last_5 / 5) * remaining_v, 4)
+    df["projected_corners_rate10"] = np.round((corners_last_10 / 10) * remaining_v, 4)
+    df["projected_da_remaining"]   = np.round((da_last5 / 5) * remaining_v, 4)
+
+    # ------------------------------------------------------------------
     # 3. Momentum deltas (entre snapshots consecutivos do mesmo jogo)
     # ------------------------------------------------------------------
     MOMENTUM_COLS = [
