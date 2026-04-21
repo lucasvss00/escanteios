@@ -1684,16 +1684,40 @@ assert_no_temporal_leakage(df_features, df_snap, df_pano, SNAPSHOT_MINUTES)
 # =============================================================================
 
 class TargetEncoderSmoothed:
-    """Target encoding com smoothing Bayesiano para categorias de alta cardinalidade."""
+    """Target encoding com smoothing Bayesiano para categorias de alta cardinalidade.
 
-    def __init__(self, cols: list[str], target_col: str, smoothing: int = 10):
+    Além do encoding suavizado, expõe a confiabilidade (weight ∈ [0,1]) de cada
+    categoria como feature separada (*_enc_reliability), permitindo que o modelo
+    aprenda a descontar encodings baseados em poucos jogos.
+
+    Parâmetros
+    ----------
+    rolling_window : int | None
+        Se definido, usa apenas os últimos `rolling_window` jogos de cada categoria
+        para calcular o encoding. Protege contra drift temporal (ex: times que mudaram
+        de estilo após transferências). None = usa histórico completo.
+    """
+
+    def __init__(self, cols: list[str], target_col: str, smoothing: int = 10,
+                 rolling_window: int | None = None):
         self.cols = cols
         self.target_col = target_col
         self.smoothing = smoothing
+        self.rolling_window = rolling_window
         self.encodings_: dict[str, dict] = {}
+        self.counts_: dict[str, dict] = {}   # n de jogos usados por categoria
         self.global_mean_: float = 0.0
 
     def fit(self, df: pd.DataFrame) -> "TargetEncoderSmoothed":
+        # Filtra apenas últimos N jogos por categoria se rolling_window definido
+        if self.rolling_window is not None and "kickoff_dt" in df.columns:
+            df = (df.sort_values("kickoff_dt")
+                    .groupby(df.columns[df.columns.get_loc(self.cols[0])
+                                         if self.cols[0] in df.columns else 0],
+                              group_keys=False)
+                    .apply(lambda g: g.tail(self.rolling_window),
+                           include_groups=False)
+                    .reset_index(drop=True))
         self.global_mean_ = df[self.target_col].mean()
         for col in self.cols:
             if col not in df.columns:
@@ -1702,14 +1726,21 @@ class TargetEncoderSmoothed:
             smooth = stats["count"] / (stats["count"] + self.smoothing)
             stats["encoded"] = smooth * stats["mean"] + (1 - smooth) * self.global_mean_
             self.encodings_[col] = stats["encoded"].to_dict()
+            self.counts_[col] = stats["count"].to_dict()
         return self
 
     def transform(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         for col in self.cols:
-            new_col = f"{col}_target_enc"
             mapping = self.encodings_.get(col, {})
-            df[new_col] = df[col].map(mapping).fillna(self.global_mean_)
+            counts  = self.counts_.get(col, {})
+            # Encoding suavizado (fallback = média global para times desconhecidos)
+            df[f"{col}_target_enc"] = df[col].map(mapping).fillna(self.global_mean_)
+            # Confiabilidade: n / (n + smoothing) ∈ [0,1]
+            # 0 = time desconhecido, 1 = muitos jogos no treino
+            raw_counts = df[col].map(counts).fillna(0.0)
+            df[f"{col}_enc_reliability"] = (
+                raw_counts / (raw_counts + self.smoothing)).round(4)
         return df
 
 
