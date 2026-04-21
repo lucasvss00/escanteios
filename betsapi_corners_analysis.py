@@ -3328,7 +3328,7 @@ try:
     # Use --no-walkforward para pular esta seção.
     # ==================================================================
     _SKIP_WF = "--no-walkforward" in _sys.argv
-    N_WF_FOLDS = 5
+    N_WF_FOLDS = 7   # 5 janelas de teste (ti ∈ 2..6)
 
     if not _SKIP_WF:
         print(f"\n{'═' * 80}")
