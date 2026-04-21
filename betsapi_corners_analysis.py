@@ -3807,26 +3807,34 @@ try:
                   f"MAE={agg_mae:.3f}  ROI std={roi_std:.1%}")
 
         # --- Tabela resumo Walk-Forward ---
-        print(f"\n{'═' * 90}")
+        print(f"\n{'═' * 115}")
         print(f"  WALK-FORWARD VALIDATION — RESUMO AGREGADO ({N_WF_FOLDS} folds, "
               f"{N_WF_FOLDS - 2} janelas)")
-        print(f"{'═' * 90}")
+        print(f"{'═' * 115}")
         print(f"  {'Min':>4s}  {'Apostas':>8s}  {'Acurácia':>9s}  {'ROI':>8s}  "
-              f"{'ROI std':>8s}  {'MAE':>6s}  {'Folds':>5s}  {'ROI por fold'}")
-        print(f"  {'─'*4}  {'─'*8}  {'─'*9}  {'─'*8}  {'─'*8}  {'─'*6}  {'─'*5}  {'─'*30}")
+              f"{'IC90% low':>10s}  {'IC90% high':>10s}  {'ROI std':>8s}  "
+              f"{'MAE':>6s}  {'Folds':>5s}  {'ROI por fold'}")
+        print(f"  {'─'*4}  {'─'*8}  {'─'*9}  {'─'*8}  {'─'*10}  {'─'*10}  "
+              f"{'─'*8}  {'─'*6}  {'─'*5}  {'─'*30}")
         for m in SNAPSHOT_MINUTES:
             if m not in wf_summary:
                 continue
             info = wf_summary[m]
             fr_str = ", ".join(f"{r:+.1%}" for r in info["fold_rois"])
+            _ci_flag = ("✅" if info["roi_ci_low"] > 0
+                        else "⚠️" if info["roi"] > 0 else "❌")
             print(f"  {m:>4d}  {info['total_bets']:>8,}  {info['accuracy']:>8.1%}  "
-                  f"{info['roi']:>+7.1%}  {info['roi_std']:>7.1%}  "
-                  f"{info['mae_avg']:>6.3f}  {info['n_folds']:>5d}  {fr_str}")
-        print(f"{'═' * 90}")
+                  f"{info['roi']:>+7.1%}  {info['roi_ci_low']:>+9.1%}  "
+                  f"{info['roi_ci_high']:>+9.1%}  {info['roi_std']:>7.1%}  "
+                  f"{info['mae_avg']:>6.3f}  {info['n_folds']:>5d}  {fr_str} {_ci_flag}")
+        print(f"{'═' * 115}")
         print(f"\n  Interpretação:")
-        print(f"    - ROI consistente entre folds (std < 10%) → sinal confiável")
-        print(f"    - ROI com alta variância entre folds → possível overfitting no threshold")
+        print(f"    - IC90% low > 0 → edge real com 95% de confiança ✅")
+        print(f"    - IC90% low < 0 mas ROI > 0 → pode ser sorte amostral ⚠️")
+        print(f"    - ROI std < 10% entre folds → sinal estável")
         print(f"    - ROI walk-forward < ROI single-split → o split único estava otimista")
+        print(f"    - Threshold: critério robusto (ROI≥15% e ≥200 apostas no cal) "
+              f"ou fallback (max ROI, ≥50 apostas)")
         print(f"  (use --no-walkforward para pular esta seção)")
 
         # Salva no metadata
