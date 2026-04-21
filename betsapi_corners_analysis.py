@@ -3660,27 +3660,40 @@ try:
                 # --- Threshold (Over e Under no cal) com stability filters ---
                 _BE = 1.0 / ODDS_OVER
                 _WF_THRESH_MAX = 0.72
-                _WF_MIN_CAL_BET = 50
-                _WF_MIN_CAL_ROI = 0.05
+                _WF_MIN_CAL_BET = 50       # fallback: min apostas para critério de max ROI
+                _WF_MIN_CAL_ROI = 0.05     # fallback: ROI mínimo para aceitar direção
+                _WF_ROBUST_ROI  = 0.15     # critério robusto: ROI alvo mínimo
+                _WF_ROBUST_BETS = 200      # critério robusto: apostas mínimas no cal
                 _best_ot, _best_or = _BE + MIN_EDGE, -999.0
                 _best_ut, _best_ur = _BE + MIN_EDGE, -999.0
                 _pu_ca = 1.0 - po_ca
                 _ua_ca = 1 - oa_ca
+                _robust_ot_found, _robust_ut_found = False, False
 
                 for _thr in np.arange(_BE + MIN_EDGE, _WF_THRESH_MAX + 0.001, 0.01):
                     # Over
                     _mo = po_ca >= _thr
-                    if _mo.sum() >= _WF_MIN_CAL_BET:
+                    _nmo = int(_mo.sum())
+                    if _nmo >= _WF_MIN_CAL_BET:
                         _wo = oa_ca[_mo].sum()
-                        _ro = (_wo * (ODDS_OVER - 1) - (_mo.sum() - _wo)) / _mo.sum()
-                        if _ro > _best_or:
+                        _ro = (_wo * (ODDS_OVER - 1) - (_nmo - _wo)) / _nmo
+                        # critério robusto: menor threshold com ROI≥15% e n_bets≥200
+                        if not _robust_ot_found and _nmo >= _WF_ROBUST_BETS and _ro >= _WF_ROBUST_ROI:
+                            _best_or, _best_ot = _ro, _thr
+                            _robust_ot_found = True
+                        # fallback: max ROI (só atualiza se critério robusto não foi encontrado)
+                        if not _robust_ot_found and _ro > _best_or:
                             _best_or, _best_ot = _ro, _thr
                     # Under
                     _mu = _pu_ca >= _thr
-                    if _mu.sum() >= _WF_MIN_CAL_BET:
+                    _nmu = int(_mu.sum())
+                    if _nmu >= _WF_MIN_CAL_BET:
                         _wu = _ua_ca[_mu].sum()
-                        _ru = (_wu * (ODDS_UNDER - 1) - (_mu.sum() - _wu)) / _mu.sum()
-                        if _ru > _best_ur:
+                        _ru = (_wu * (ODDS_UNDER - 1) - (_nmu - _wu)) / _nmu
+                        if not _robust_ut_found and _nmu >= _WF_ROBUST_BETS and _ru >= _WF_ROBUST_ROI:
+                            _best_ur, _best_ut = _ru, _thr
+                            _robust_ut_found = True
+                        if not _robust_ut_found and _ru > _best_ur:
                             _best_ur, _best_ut = _ru, _thr
 
                 # Consenso dos métodos (walk-forward)
