@@ -1914,8 +1914,11 @@ try:
         "hist_home_dangerous_attacks_avg", "hist_away_dangerous_attacks_avg",
         "hist_home_goals_avg", "hist_away_goals_avg",
         "hist_home_games", "hist_away_games",
-        # Target encoding
+        # Target encoding + confiabilidade do encoding (n / (n + smoothing))
         "league_id_target_enc", "home_team_target_enc", "away_team_target_enc",
+        "league_id_enc_reliability", "home_team_enc_reliability", "away_team_enc_reliability",
+        # Flag de amostra pequena: encoding pouco confiável (times com <10 jogos no treino)
+        "low_data_flag",
         # Temporais
         "day_of_week", "hour_of_day", "month", "is_weekend",
         # Game state avançado
