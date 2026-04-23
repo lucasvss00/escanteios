@@ -47,6 +47,33 @@ ODDS              = 1.83
 
 
 # ---------------------------------------------------------------------------
+# PICKLE COMPAT — betsapi_corners_analysis.py salva TargetEncoderSmoothed
+# com __main__.TargetEncoderSmoothed; este stub permite carregar o .joblib
+# ---------------------------------------------------------------------------
+class TargetEncoderSmoothed:
+    """Stub de compatibilidade para joblib.load do target encoder treinado."""
+    def __init__(self, cols=None, target_col="", smoothing=10, rolling_window=None):
+        self.cols = cols or []
+        self.target_col = target_col
+        self.smoothing = smoothing
+        self.rolling_window = rolling_window
+        self.encodings_: dict = {}
+        self.counts_:    dict = {}
+        self.global_mean_: float = 0.0
+
+    def transform(self, df: "pd.DataFrame") -> "pd.DataFrame":
+        import pandas as _pd
+        df = df.copy()
+        for col in self.cols:
+            m = self.encodings_.get(col, {})
+            c = self.counts_.get(col, {})
+            df[f"{col}_target_enc"] = df[col].map(m).fillna(self.global_mean_)
+            rc = df[col].map(c).fillna(0.0)
+            df[f"{col}_enc_reliability"] = (rc / (rc + self.smoothing)).round(4)
+        return df
+
+
+# ---------------------------------------------------------------------------
 # HELPERS — split temporal (igual ao pipeline principal)
 # ---------------------------------------------------------------------------
 def _split_temporal(df_min: pd.DataFrame):
