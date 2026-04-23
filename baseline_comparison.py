@@ -541,6 +541,10 @@ def run(args) -> None:
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Comparação de baselines")
     parser.add_argument("--parquet",     default=str(DEFAULT_PARQUET))
     parser.add_argument("--models-dir",  default=str(DEFAULT_MODELS))
