@@ -608,6 +608,10 @@ Execute recalibrate_ngboost.py se ECE > 0.06 ou KS p < 0.05:
 # MAIN
 # ---------------------------------------------------------------------------
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Diagnóstico de calibração NGBoost")
     parser.add_argument("--parquet",     default=str(DEFAULT_PARQUET))
     parser.add_argument("--models-dir",  default=str(DEFAULT_MODELS))
