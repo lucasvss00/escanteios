@@ -681,6 +681,15 @@ class _TELocal:
         return df
 
 
+# Alias para compatibilidade com pickle: o target_encoder_minN.joblib foi salvo
+# com __main__.TargetEncoderSmoothed (contexto de betsapi_corners_analysis.py).
+# O stub abaixo tem rolling_window para coincidir com a assinatura original.
+class TargetEncoderSmoothed(_TELocal):
+    def __init__(self, cols=None, target_col="", smoothing=10, rolling_window=None):
+        super().__init__(cols=cols or [], target_col=target_col, smoothing=smoothing)
+        self.rolling_window = rolling_window
+
+
 # ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
