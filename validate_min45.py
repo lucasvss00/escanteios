@@ -656,7 +656,7 @@ def _make_plots(
 
 
 # ---------------------------------------------------------------------------
-# LOCAL TE
+# LOCAL TE  (+ alias para compatibilidade com pickle do script de treino)
 # ---------------------------------------------------------------------------
 class _TELocal:
     def __init__(self, cols, target_col, smoothing=10):
