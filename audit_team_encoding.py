@@ -757,6 +757,10 @@ def print_decision(exp_df: pd.DataFrame) -> None:
 # MAIN
 # ---------------------------------------------------------------------------
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Auditoria de target encoding")
     parser.add_argument("--parquet",      default=str(DEFAULT_PARQUET))
     parser.add_argument("--audit-csv",    default=str(DEFAULT_AUDIT_CSV))
