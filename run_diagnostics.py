@@ -132,6 +132,10 @@ def _run_step(
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with open(log_path, "w", encoding="utf-8") as flog:
             flog.write(f"# {datetime.now().isoformat()}  cmd: {' '.join(full_cmd)}\n\n")
+            import os as _os
+            _env = _os.environ.copy()
+            _env["PYTHONIOENCODING"] = "utf-8"
+            _env["PYTHONUTF8"] = "1"
             proc = subprocess.Popen(
                 full_cmd,
                 stdout=subprocess.PIPE,
@@ -139,6 +143,7 @@ def _run_step(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                env=_env,
             )
             for line in proc.stdout:
                 sys.stdout.write(line)
