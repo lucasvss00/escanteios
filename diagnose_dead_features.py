@@ -469,6 +469,10 @@ def run_sanity(df: pd.DataFrame, report: pd.DataFrame, models_dir: Path) -> None
 # MAIN
 # ---------------------------------------------------------------------------
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Diagnóstico de features mortas")
     parser.add_argument("--parquet", default=str(DEFAULT_PARQUET),
                         help="Caminho para features_ml.parquet")
