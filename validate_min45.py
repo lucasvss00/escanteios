@@ -262,8 +262,9 @@ def _wf_single_fold(
     brier_nb  = float(np.mean((p_nb_ca  - over_ca) ** 2))
     brier_poi = float(np.mean((p_poi_ca - over_ca) ** 2))
     p_over_te = p_nb_te if brier_nb <= brier_poi else p_poi_te
+    p_over_ca = p_nb_ca if brier_nb <= brier_poi else p_poi_ca
 
-    return p_over_te, over_te, len(y_te)
+    return p_over_te, over_te, p_over_ca, over_ca, len(y_te)
 
 
 def run_threshold_sensitivity(
