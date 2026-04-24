@@ -457,32 +457,43 @@ def run(args) -> None:
             over_te = (y_te > dline_te).astype(float)
             over_ca = (df_ca[TARGET].dropna().values.astype(float) > dline_ca).astype(float)
 
+            # Odds reais por jogo (quando disponíveis)
+            odds_over_te  = (df_te["corners_over_odds"].values
+                             if "corners_over_odds"  in df_te.columns else None)
+            odds_under_te = (df_te["corners_under_odds"].values
+                             if "corners_under_odds" in df_te.columns else None)
+
             print(f"  {'Modelo':<25} {'ROI(test)':>10} {'N apostas':>10} "
-                  f"{'Threshold':>10}  {'Veredicto'}")
-            print(f"  {'─'*25} {'─'*10} {'─'*10} {'─'*10}  {'─'*15}")
+                  f"{'Thresh':>7} {'Lado':>6}  {'Veredicto'}")
+            print(f"  {'─'*25} {'─'*10} {'─'*10} {'─'*7} {'─'*6}  {'─'*15}")
+
+            y_ca_true = df_ca[TARGET].dropna().values.astype(float)
 
             # B1 como modelo de apostas (Poisson)
             y_b1_all = baselines["B1_extrapolacao"][:len(y_te)]
-            y_b1_ca  = compute_baselines(df_ca, over_ca, train_mean,
-                                          snap_min)["B1_extrapolacao"][:len(over_ca)]
+            y_b1_ca  = compute_baselines(df_ca, y_ca_true, train_mean,
+                                          snap_min)["B1_extrapolacao"][:len(y_ca_true)]
             p_b1_te = _p_over_poisson(dline_te, y_b1_all)
             p_b1_ca = _p_over_poisson(dline_ca[:len(over_ca)],
                                        y_b1_ca[:len(over_ca)])
-            roi_b1, nb_b1, thr_b1 = _best_roi(p_b1_ca, over_ca[:len(p_b1_ca)],
-                                                p_b1_te, over_te)
+            roi_b1, nb_b1, thr_b1, side_b1 = _best_roi(
+                p_b1_ca, over_ca[:len(p_b1_ca)], p_b1_te, over_te,
+                odds_over_te, odds_under_te)
 
             # B5 Poisson liga
             y_b5_all = baselines["B5_poisson_liga"][:len(y_te)]
-            y_b5_ca  = compute_baselines(df_ca, over_ca, train_mean,
-                                          snap_min)["B5_poisson_liga"][:len(over_ca)]
+            y_b5_ca  = compute_baselines(df_ca, y_ca_true, train_mean,
+                                          snap_min)["B5_poisson_liga"][:len(y_ca_true)]
             p_b5_te = _p_over_poisson(dline_te, y_b5_all)
             p_b5_ca = _p_over_poisson(dline_ca[:len(over_ca)],
                                        y_b5_ca[:len(over_ca)])
-            roi_b5, nb_b5, thr_b5 = _best_roi(p_b5_ca, over_ca[:len(p_b5_ca)],
-                                                p_b5_te, over_te)
+            roi_b5, nb_b5, thr_b5, side_b5 = _best_roi(
+                p_b5_ca, over_ca[:len(p_b5_ca)], p_b5_te, over_te,
+                odds_over_te, odds_under_te)
 
             # XGBoost (Poisson sobre ŷ)
-            roi_xgb = float("nan"); nb_xgb = 0; thr_xgb = BREAKEVEN + MIN_EDGE
+            roi_xgb = float("nan"); nb_xgb = 0
+            thr_xgb = BREAKEVEN + MIN_EDGE; side_xgb = "Over"
             if y_xgb is not None:
                 y_xgb_ca_preds = None
                 if xgb_path.exists() and feature_list:
@@ -497,14 +508,14 @@ def run(args) -> None:
                     p_xgb_te = _p_over_poisson(dline_te, y_xgb[:len(dline_te)])
                     p_xgb_ca = _p_over_poisson(dline_ca[:len(over_ca)],
                                                 y_xgb_ca_preds[:len(over_ca)])
-                    roi_xgb, nb_xgb, thr_xgb = _best_roi(
-                        p_xgb_ca, over_ca[:len(p_xgb_ca)],
-                        p_xgb_te, over_te)
+                    roi_xgb, nb_xgb, thr_xgb, side_xgb = _best_roi(
+                        p_xgb_ca, over_ca[:len(p_xgb_ca)], p_xgb_te, over_te,
+                        odds_over_te, odds_under_te)
 
-            for (lbl, roi_v, n_b, thr) in [
-                ("B1 extrapol. + Poisson", roi_b1, nb_b1, thr_b1),
-                ("B5 liga + Poisson",      roi_b5, nb_b5, thr_b5),
-                ("XGBoost + Poisson",      roi_xgb, nb_xgb, thr_xgb),
+            for (lbl, roi_v, n_b, thr, side) in [
+                ("B1 extrapol. + Poisson", roi_b1, nb_b1, thr_b1, side_b1),
+                ("B5 liga + Poisson",      roi_b5, nb_b5, thr_b5, side_b5),
+                ("XGBoost + Poisson",      roi_xgb, nb_xgb, thr_xgb, side_xgb),
             ]:
                 roi_s = f"{roi_v:+.1%}" if not np.isnan(roi_v) else "   N/A"
                 thr_s = f"{thr:.0%}"
@@ -512,7 +523,7 @@ def run(args) -> None:
                 if lbl.startswith("XGBoost") and not np.isnan(roi_v) and not np.isnan(roi_b1):
                     diff = roi_v - roi_b1
                     verd = (f"Δ vs B1: {diff:+.1%} {'✅' if diff > 0.01 else '⚠' if diff > -0.02 else '❌'}")
-                print(f"  {lbl:<25} {roi_s:>10} {n_b:>10,} {thr_s:>10}  {verd}")
+                print(f"  {lbl:<25} {roi_s:>10} {n_b:>10,} {thr_s:>7} {side:>6}  {verd}")
 
             betting_rows.append({
                 "snap_min": snap_min,
