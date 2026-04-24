@@ -357,10 +357,10 @@ def build_league_avg_corners(df_pano: pd.DataFrame) -> tuple[dict[str, float | N
     result_std: dict[str, float | None] = {}
     league_history: dict[str, list[float]] = {}
 
-    for _, row in df.iterrows():
-        event_id = row["event_id"]
-        league_id = str(row.get("league_id", ""))
-        ct = row.get("corners_total")
+    for row in df.itertuples(index=False):
+        event_id = row.event_id
+        league_id = str(getattr(row, "league_id", ""))
+        ct = getattr(row, "corners_total", None)
 
         # Calcula com base nos jogos ANTERIORES desta liga
         if league_id and league_id in league_history:
