@@ -1749,7 +1749,7 @@ class TargetEncoderSmoothed:
         return df
 
 
-ENCODE_COLS = ["league_id", "home_team", "away_team"]
+ENCODE_COLS = ["league_id"]  # home_team e away_team removidos — overfitting por identidade de time
 # Apenas usa colunas que existem no dataset
 ENCODE_COLS = [c for c in ENCODE_COLS if c in df_features.columns]
 
