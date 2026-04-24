@@ -17,11 +17,16 @@ Saídas:
 
 # %%
 import sys as _sys
+import warnings as _warnings
 import pandas as pd
 import numpy as np
 from pathlib import Path
 import io as _io
 import datetime as _dt
+
+# NGBoost LogNormal produz overflow/invalid durante gradient descent antes do
+# early stopping frear — warnings não-fatais, o modelo converge normalmente.
+_warnings.filterwarnings("ignore", category=RuntimeWarning, module="ngboost")
 
 DATA_DIR = Path("dados_escanteios")
 
