@@ -175,7 +175,10 @@ def _wf_single_fold(
     te_model, medians, feature_list: list[str],
     global_mean: float,
 ):
-    """Walk-forward de 1 fold — retorna (p_over_te, over_actual_te, len_test)."""
+    """
+    Walk-forward de 1 fold.
+    Retorna (p_over_te, over_actual_te, p_over_cal, over_actual_cal, len_test).
+    """
     import xgboost as xgb
     from sklearn.isotonic import IsotonicRegression
     from sklearn.preprocessing import StandardScaler
