@@ -489,26 +489,35 @@ def test_negbinom_vs_xgbclf(
         df_ca = df_min.iloc[cal_end - fold_size:cal_end].copy()
         df_te = df_min.iloc[test_start:test_end].copy()
 
-        p_nb, over_actual, n_te = _wf_single_fold(
+        p_nb, over_actual, p_nb_cal, over_cal, n_te = _wf_single_fold(
             df_tr, df_ca, df_te, snap_min,
             te_model, medians, feature_list, global_mean)
         if p_nb is None or n_te < 20:
             continue
 
         # _wf_single_fold já escolhe NegBinom/Poisson pelo Brier no cal.
-        # Aqui vamos usar threshold fixo 0.56 para comparar os dois métodos
-        # de probabilidade separadamente.
-        p_poi, _, _ = _wf_single_fold(
+        # Aqui vamos usar threshold dinâmico selecionado no CAL para comparar os métodos.
+        p_poi, _, p_poi_cal, _, _ = _wf_single_fold(
             df_tr.copy(), df_ca.copy(), df_te.copy(), snap_min,
             te_model, medians, feature_list, global_mean)
 
-        for method, p_ov in [("NegBinom", p_nb), ("Poisson", p_poi)]:
+        for method, p_ov, p_ov_cal in [("NegBinom", p_nb, p_nb_cal),
+                                        ("Poisson",  p_poi, p_poi_cal)]:
             if p_ov is None:
                 continue
-            mask   = p_ov >= 0.56
+            # Threshold dinâmico no CAL
+            if _HAS_ROI_UTILS and p_ov_cal is not None:
+                _, _nb, _thr, _side = select_thresh(
+                    p_ov_cal, over_cal, p_ov, over_actual)
+                if _side == "Over":
+                    mask = p_ov >= _thr; _act = over_actual
+                else:
+                    mask = (1.0 - p_ov) >= _thr; _act = 1 - over_actual
+            else:
+                mask = p_ov >= 0.56; _act = over_actual
             n_bets = int(mask.sum())
             if n_bets > 0:
-                n_wins = int(over_actual[mask].sum())
+                n_wins = int(_act[mask].sum())
                 metrics[method]["wins"] += n_wins
                 metrics[method]["bets"] += n_bets
                 fold_roi = (n_wins*(ODDS-1)-(n_bets-n_wins))/n_bets
