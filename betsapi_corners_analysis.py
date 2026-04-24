@@ -1920,8 +1920,9 @@ try:
         "hist_home_goals_avg", "hist_away_goals_avg",
         "hist_home_games", "hist_away_games",
         # Target encoding + confiabilidade do encoding (n / (n + smoothing))
-        "league_id_target_enc", "home_team_target_enc", "away_team_target_enc",
-        "league_id_enc_reliability", "home_team_enc_reliability", "away_team_enc_reliability",
+        # Apenas liga: home_team/away_team removidos para evitar overfitting por identidade
+        "league_id_target_enc",
+        "league_id_enc_reliability",
         # Flag de amostra pequena: encoding pouco confiável (times com <10 jogos no treino)
         "low_data_flag",
         # Temporais
