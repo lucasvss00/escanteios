@@ -331,14 +331,12 @@ def analyse_prob_distribution(
         df_ca = df_min.iloc[cal_end - fold_size:cal_end].copy()
         df_te = df_min.iloc[test_start:test_end].copy()
 
-        p_over, over_actual, _ = _wf_single_fold(
+        p_over, over_actual, _p_cal, _ov_cal, _ = _wf_single_fold(
             df_tr, df_ca, df_te, snap_min,
             te_model, medians, feature_list, global_mean)
         if p_over is None:
             continue
 
-        # Recalcula p_over para o cal também (re-call necessário)
-        # (usa os mesmos parâmetros; aqui só pega cal como subset do tr)
         results.append({
             "fold": ti,
             "p_over_mean":  round(float(p_over.mean()), 4),
