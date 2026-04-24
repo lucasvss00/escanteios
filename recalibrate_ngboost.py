@@ -556,13 +556,19 @@ def run_walk_forward(
             iso_wf = fit_isotonic(p_ln_ca, over_ca)
             p_ln_te_recal = calibrate(iso_wf, p_ln_te)
 
-            for method, p_te in [
-                ("raw_lognorm",    p_ln_te),
-                ("recal_lognorm",  p_ln_te_recal),
-                ("poisson_approx", p_poi_te),
+            p_poi_ca = _p_over_poisson(lines_ca, mu_ca)
+            p_ln_te_recal_ca = calibrate(iso_wf, p_ln_ca)  # recal no CAL (para select_thresh)
+
+            for method, p_te, p_ca in [
+                ("raw_lognorm",    p_ln_te,       p_ln_ca),
+                ("recal_lognorm",  p_ln_te_recal, p_ln_te_recal_ca),
+                ("poisson_approx", p_poi_te,      p_poi_ca),
             ]:
                 brier = _brier(p_te, over_te)
-                roi_v, n_bets = _roi(p_te, over_te)
+                if _HAS_ROI_UTILS:
+                    roi_v, n_bets = select_thresh(p_ca, over_ca, p_te, over_te)[:2]
+                else:
+                    roi_v, n_bets = _roi(p_te, over_te)
                 wf_rows[method].append({
                     "brier": brier,
                     "roi":   roi_v if not np.isnan(roi_v) else 0.0,
