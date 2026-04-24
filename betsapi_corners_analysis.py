@@ -2586,9 +2586,9 @@ try:
 
         if _NGBOOST:
             try:
-                # LogNormal precisa de target > 0; adicionar 0.5 para jogos com 0 corners
-                _y_train_ngb = np.maximum(y_train.values.astype(float), 0.5)
-                _y_cal_ngb   = np.maximum(y_cal.values.astype(float), 0.5)
+                # LogNormal precisa de target em (0, inf); clipar [0.5, 30] estabiliza gradientes
+                _y_train_ngb = np.clip(y_train.values.astype(float), 0.5, 30.0)
+                _y_cal_ngb   = np.clip(y_cal.values.astype(float), 0.5, 30.0)
 
                 _ngb_model = NGBRegressor(
                     Dist=NGBLogNormal,
