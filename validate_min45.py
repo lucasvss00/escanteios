@@ -26,6 +26,15 @@ from scipy.stats import nbinom as sp_nbinom
 
 warnings.filterwarnings("ignore")
 
+# Importa utilitários de ROI compartilhados (mesma lógica do pipeline principal)
+try:
+    from _roi_utils import (select_thresh, profit_vec,
+                            ODDS_OVER, ODDS_UNDER, BREAKEVEN, MIN_EDGE)
+    ODDS = ODDS_OVER
+    _HAS_ROI_UTILS = True
+except ImportError:
+    _HAS_ROI_UTILS = False
+
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
