@@ -456,11 +456,7 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     _POSS_COLS = [c for c in ["possession_home", "possession_away"] if c in snap.columns]
 
     # ------------------------------------------------------------------
-    # 1. Para cada snapshot minute, pegar o "last" row (maior minute <= snap_min)
-    #    e os valores em (snap_min - N) para janelas de N minutos
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # Pré-computações fora do loop (evitar repetição por snapshot)
+    # 1. Para cada snapshot minute: pré-computações + processamento paralelo
     # ------------------------------------------------------------------
     _window_cols = [c for c in [
         "corners_home", "corners_away",
