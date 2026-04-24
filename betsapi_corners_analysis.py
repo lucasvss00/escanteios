@@ -459,14 +459,42 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
     # 1. Para cada snapshot minute, pegar o "last" row (maior minute <= snap_min)
     #    e os valores em (snap_min - N) para janelas de N minutos
     # ------------------------------------------------------------------
-    all_frames = []
+    # ------------------------------------------------------------------
+    # Pré-computações fora do loop (evitar repetição por snapshot)
+    # ------------------------------------------------------------------
+    _window_cols = [c for c in [
+        "corners_home", "corners_away",
+        "attacks_home", "attacks_away",
+        "dangerous_attacks_home", "dangerous_attacks_away",
+        "shots_on_target_home", "shots_on_target_away",
+        "shots_off_target_home", "shots_off_target_away",
+    ] if c in snap.columns]
 
-    for snap_min in snapshot_minutes:
+    # at45 calculado 1× para todos os snap_min > 45
+    _ht_vals_precomp: pd.DataFrame | None = None
+    if any(m > 45 for m in snapshot_minutes):
+        _at45 = snap[snap["minute"] <= 45]
+        if not _at45.empty and "corners_home" in snap.columns and "corners_away" in snap.columns:
+            _ht_vals_precomp = (
+                _at45.groupby("event_id")[["corners_home", "corners_away"]]
+                .last().reset_index()
+                .rename(columns={"corners_home": "_ht_ch", "corners_away": "_ht_ca"})
+            )
+
+    _CKPT_DIR = DATA_DIR / "_snap_ckpts"
+
+    def _process_one(snap_min: int) -> pd.DataFrame:
+        """Processa 1 snapshot minute — independente dos outros, thread-safe."""
+        _ckpt_path = _CKPT_DIR / f"snap_{snap_min}.parquet"
+        if not _FORCE_REBUILD and _ckpt_path.exists():
+            log.info(f"  build_live_features: minuto {snap_min} carregado do checkpoint")
+            return pd.read_parquet(_ckpt_path)
+
         log.info(f"  build_live_features: processando minuto {snap_min}...")
 
         until = snap[snap["minute"] <= snap_min].copy()
         if until.empty:
-            continue
+            return pd.DataFrame()
 
         # "last" = última linha por event_id (minute mais alto <= snap_min)
         last = until.groupby("event_id").last().reset_index()
@@ -489,19 +517,10 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
             past_last = past.groupby("event_id")[cols].last().reset_index()
             return past_last
 
-        _window_cols = [c for c in [
-            "corners_home", "corners_away",
-            "attacks_home", "attacks_away",
-            "dangerous_attacks_home", "dangerous_attacks_away",
-            "shots_on_target_home", "shots_on_target_away",
-            "shots_off_target_home", "shots_off_target_away",
-        ] if c in snap.columns]
-
         past5 = _get_past_values(5, _window_cols)
         past10 = _get_past_values(10, _window_cols)
         past15 = _get_past_values(15, _window_cols)
 
-        # Rename past columns
         for df_past, suffix in [(past5, "_p5"), (past10, "_p10"), (past15, "_p15")]:
             for c in df_past.columns:
                 if c != "event_id":
@@ -511,20 +530,20 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
         last = last.merge(past10, on="event_id", how="left")
         last = last.merge(past15, on="event_id", how="left")
 
-        # --- First corner minute per event ---
-        _ct = until.copy()
-        _ct["_ct"] = _ct["corners_home"].fillna(0) + _ct["corners_away"].fillna(0)
-        _first_corner = _ct[_ct["_ct"] > 0].groupby("event_id")["minute"].first().reset_index(
-            name="_first_corner_min")
+        # --- First corner + time-since stats (single copy de until) ---
+        _ev = until.copy()
+        _ev["_ct"] = _ev["corners_home"].fillna(0) + _ev["corners_away"].fillna(0)
+        _first_corner = (
+            _ev[_ev["_ct"] > 0]
+            .groupby("event_id")["minute"].first()
+            .reset_index(name="_first_corner_min")
+        )
         last = last.merge(_first_corner, on="event_id", how="left")
 
-        # --- Half-time values (corners at minute 45) ---
+        # --- Half-time values (at45 pré-computado fora do loop) ---
         if snap_min > 45:
-            at45 = snap[snap["minute"] <= 45]
-            if not at45.empty:
-                ht_vals = at45.groupby("event_id")[["corners_home", "corners_away"]].last().reset_index()
-                ht_vals.rename(columns={"corners_home": "_ht_ch", "corners_away": "_ht_ca"}, inplace=True)
-                last = last.merge(ht_vals, on="event_id", how="left")
+            if _ht_vals_precomp is not None:
+                last = last.merge(_ht_vals_precomp, on="event_id", how="left")
             else:
                 last["_ht_ch"] = 0
                 last["_ht_ca"] = 0
@@ -532,39 +551,66 @@ def build_live_features(df_snap: pd.DataFrame, df_pano: pd.DataFrame,
             last["_ht_ch"] = np.nan
             last["_ht_ca"] = np.nan
 
-        # --- Time since last corner (vectorized) ---
-        _ct2 = until.copy()
-        _ct2["_total_c"] = _ct2["corners_home"].fillna(0) + _ct2["corners_away"].fillna(0)
-        _ct2["_diff_c"] = _ct2.groupby("event_id")["_total_c"].diff()
-        _corner_events = _ct2[_ct2["_diff_c"] > 0]
-        _last_corner_min = _corner_events.groupby("event_id")["minute"].last().reset_index(
-            name="_last_corner_minute")
-        last = last.merge(_last_corner_min, on="event_id", how="left")
+        # --- Time since last corner/shot/dangerous attack (pass único) ---
+        _ev["_total_c"]  = _ev["_ct"]  # já calculado acima
+        _ev["_total_s"]  = (
+            _ev.get("shots_on_target_home",  pd.Series(0, index=_ev.index)).fillna(0) +
+            _ev.get("shots_on_target_away",  pd.Series(0, index=_ev.index)).fillna(0)
+        )
+        _ev["_total_da"] = (
+            _ev.get("dangerous_attacks_home", pd.Series(0, index=_ev.index)).fillna(0) +
+            _ev.get("dangerous_attacks_away", pd.Series(0, index=_ev.index)).fillna(0)
+        )
+        _grp_ev = _ev.groupby("event_id")
+        _ev["_diff_c"]  = _grp_ev["_total_c"].diff()
+        _ev["_diff_s"]  = _grp_ev["_total_s"].diff()
+        _ev["_diff_da"] = _grp_ev["_total_da"].diff()
 
-        # Time since last shot
-        _ct2["_total_s"] = _ct2.get("shots_on_target_home", pd.Series(0, index=_ct2.index)).fillna(0) + \
-                           _ct2.get("shots_on_target_away", pd.Series(0, index=_ct2.index)).fillna(0)
-        _ct2["_diff_s"] = _ct2.groupby("event_id")["_total_s"].diff()
-        _shot_events = _ct2[_ct2["_diff_s"] > 0]
-        _last_shot_min = _shot_events.groupby("event_id")["minute"].last().reset_index(
-            name="_last_shot_minute")
-        last = last.merge(_last_shot_min, on="event_id", how="left")
+        last = last.merge(
+            _ev[_ev["_diff_c"]  > 0].groupby("event_id")["minute"].last()
+            .reset_index(name="_last_corner_minute"), on="event_id", how="left")
+        last = last.merge(
+            _ev[_ev["_diff_s"]  > 0].groupby("event_id")["minute"].last()
+            .reset_index(name="_last_shot_minute"), on="event_id", how="left")
+        last = last.merge(
+            _ev[_ev["_diff_da"] > 0].groupby("event_id")["minute"].last()
+            .reset_index(name="_last_da_minute"), on="event_id", how="left")
 
-        # Time since last dangerous attack
-        _ct2["_total_da"] = _ct2.get("dangerous_attacks_home", pd.Series(0, index=_ct2.index)).fillna(0) + \
-                            _ct2.get("dangerous_attacks_away", pd.Series(0, index=_ct2.index)).fillna(0)
-        _ct2["_diff_da"] = _ct2.groupby("event_id")["_total_da"].diff()
-        _da_events = _ct2[_ct2["_diff_da"] > 0]
-        _last_da_min = _da_events.groupby("event_id")["minute"].last().reset_index(
-            name="_last_da_minute")
-        last = last.merge(_last_da_min, on="event_id", how="left")
+        # Salva checkpoint para recuperação em caso de crash
+        _CKPT_DIR.mkdir(exist_ok=True)
+        last.to_parquet(_ckpt_path, index=False)
+        return last
 
-        all_frames.append(last)
+    # ------------------------------------------------------------------
+    # Processamento paralelo: cada snapshot_minute é independente
+    # Usa threads — pandas/numpy liberam o GIL em operações C (groupby, merge)
+    # ------------------------------------------------------------------
+    import concurrent.futures as _cf
+    _n_workers = min(len(snapshot_minutes), 4)
+    all_frames_raw: list[pd.DataFrame] = []
+    with _cf.ThreadPoolExecutor(max_workers=_n_workers) as _executor:
+        _futs = {_executor.submit(_process_one, m): m for m in snapshot_minutes}
+        for _fut in _cf.as_completed(_futs):
+            _frame = _fut.result()
+            if not _frame.empty:
+                all_frames_raw.append(_frame)
+
+    # Limpa checkpoints após processamento bem-sucedido
+    if _CKPT_DIR.exists():
+        for _p in _CKPT_DIR.glob("snap_*.parquet"):
+            try:
+                _p.unlink()
+            except Exception:
+                pass
+        try:
+            _CKPT_DIR.rmdir()
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------
     # 2. Concatenar todos os snapshots e computar features vetorialmente
     # ------------------------------------------------------------------
-    df = pd.concat(all_frames, ignore_index=True)
+    df = pd.concat(all_frames_raw, ignore_index=True)
     SM = df["snap_minute"]
 
     # Preencher NaN de stats com 0 para aritmética segura
