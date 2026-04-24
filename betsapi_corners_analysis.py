@@ -269,11 +269,11 @@ def build_h2h_history(df_pano: pd.DataFrame) -> pd.DataFrame:
     pair_history: dict[frozenset, list[dict]] = {}
     result_rows: list[dict] = []
 
-    for _, row in df.iterrows():
-        event_id = row["event_id"]
-        home_id = str(row.get("home_id", ""))
-        away_id = str(row.get("away_id", ""))
-        current_dt = row.get("kickoff_dt_parsed")
+    for row in df.itertuples(index=False):
+        event_id = row.event_id
+        home_id = str(getattr(row, "home_id", ""))
+        away_id = str(getattr(row, "away_id", ""))
+        current_dt = getattr(row, "kickoff_dt_parsed", None)
 
         feat: dict = {"event_id": event_id}
 
@@ -326,9 +326,9 @@ def build_h2h_history(df_pano: pd.DataFrame) -> pd.DataFrame:
         # Atualiza APÓS calcular (sem leakage)
         if home_id and away_id and home_id != away_id:
             key = frozenset({home_id, away_id})
-            ct = row.get("corners_total")
-            ch = row.get("corners_home_total")
-            ca = row.get("corners_away_total")
+            ct = getattr(row, "corners_total", None)
+            ch = getattr(row, "corners_home_total", None)
+            ca = getattr(row, "corners_away_total", None)
             pair_history.setdefault(key, []).append({
                 "date": current_dt,
                 "corners_total": float(ct) if ct is not None and pd.notna(ct) else None,
