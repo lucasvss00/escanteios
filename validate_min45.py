@@ -207,7 +207,7 @@ def _wf_single_fold(
     y_te = df_te[TARGET].values.astype(float)
 
     if len(X_tr) < 80 or len(X_ca) < 20 or len(X_te) < 20:
-        return None, None, 0
+        return None, None, None, None, 0
 
     # XGBoost regressor
     _hp = dict(n_estimators=300, max_depth=6, learning_rate=0.03,
