@@ -33,6 +33,13 @@ from scipy.stats import poisson as sp_poisson
 
 warnings.filterwarnings("ignore")
 
+# Importa utilitários de ROI compartilhados (mesma lógica do pipeline principal)
+try:
+    from _roi_utils import select_thresh, ODDS_OVER, ODDS_UNDER, BREAKEVEN, MIN_EDGE
+    _HAS_ROI_UTILS = True
+except ImportError:
+    _HAS_ROI_UTILS = False
+
 # ---------------------------------------------------------------------------
 # PICKLE COMPAT — betsapi_corners_analysis.py salva TargetEncoderSmoothed
 # com __main__.TargetEncoderSmoothed; este stub permite carregar o .joblib
