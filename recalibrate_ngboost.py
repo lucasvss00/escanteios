@@ -118,14 +118,16 @@ def _prepare_X(
 
 
 def _dynamic_line(df: pd.DataFrame, snap_min: int) -> np.ndarray:
+    """Linha dinâmica arredondada para 0.5 mais próximo (igual ao pipeline principal)."""
     rem = 90 - snap_min
     csf = (df["corners_total_so_far"].values
            if "corners_total_so_far" in df.columns else np.zeros(len(df)))
-    rate = (np.where(df["league_avg_corners"].isna(),
-                     11.0 / 90.0, df["league_avg_corners"].values / 90.0)
-            if "league_avg_corners" in df.columns
-            else np.full(len(df), 11.0 / 90.0))
-    return csf + rem * rate
+    if "league_avg_corners" in df.columns:
+        la = df["league_avg_corners"].values
+        rate = np.where(np.isfinite(la) & (la > 0), la / 90.0, 11.0 / 90.0)
+    else:
+        rate = np.full(len(df), 11.0 / 90.0)
+    return np.round((csf + rem * rate) * 2) / 2
 
 
 def _lognorm_params(dist_params: dict) -> tuple[np.ndarray, np.ndarray]:
