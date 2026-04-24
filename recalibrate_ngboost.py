@@ -321,13 +321,19 @@ def run_calibration(
         p_poisson_cal = _p_over_poisson(lines_cal, mu_cal)
         p_poisson_te  = _p_over_poisson(lines_te,  mu_te)
 
-        # Métricas raw
+        # Métricas raw — threshold selecionado no CAL (robusto Over+Under)
         ece_ln_raw    = _ece(p_lognorm_te,  over_te)
         ece_poi_raw   = _ece(p_poisson_te,  over_te)
         brier_ln_raw  = _brier(p_lognorm_te, over_te)
         brier_poi_raw = _brier(p_poisson_te, over_te)
-        roi_ln_raw,   nb_ln  = _roi(p_lognorm_te,  over_te)
-        roi_poi_raw,  nb_poi = _roi(p_poisson_te, over_te)
+        if _HAS_ROI_UTILS:
+            roi_ln_raw,  nb_ln  = select_thresh(
+                p_lognorm_cal, over_cal, p_lognorm_te, over_te)[:2]
+            roi_poi_raw, nb_poi = select_thresh(
+                p_poisson_cal, over_cal, p_poisson_te, over_te)[:2]
+        else:
+            roi_ln_raw,  nb_ln  = _roi(p_lognorm_te, over_te)
+            roi_poi_raw, nb_poi = _roi(p_poisson_te, over_te)
 
         print(f"  Raw LogNorm  — ECE={ece_ln_raw:.5f}  Brier={brier_ln_raw:.5f}  "
               f"ROI={roi_ln_raw:+.2%}  bets={nb_ln}")
@@ -355,8 +361,14 @@ def run_calibration(
         ece_poi_recal   = _ece(p_poisson_te_recal,  over_te)
         brier_ln_recal  = _brier(p_lognorm_te_recal, over_te)
         brier_poi_recal = _brier(p_poisson_te_recal, over_te)
-        roi_ln_recal,   nb_lr  = _roi(p_lognorm_te_recal,  over_te)
-        roi_poi_recal,  nb_pr  = _roi(p_poisson_te_recal,  over_te)
+        if _HAS_ROI_UTILS:
+            roi_ln_recal,  nb_lr = select_thresh(
+                p_lognorm_cal_recal, over_cal, p_lognorm_te_recal, over_te)[:2]
+            roi_poi_recal, nb_pr = select_thresh(
+                p_poisson_cal_recal, over_cal, p_poisson_te_recal, over_te)[:2]
+        else:
+            roi_ln_recal,  nb_lr = _roi(p_lognorm_te_recal, over_te)
+            roi_poi_recal, nb_pr = _roi(p_poisson_te_recal, over_te)
 
         ece_improve_ln  = (ece_ln_raw  - ece_ln_recal)  / max(ece_ln_raw, 1e-9)
         ece_improve_poi = (ece_poi_raw - ece_poi_recal) / max(ece_poi_raw, 1e-9)
