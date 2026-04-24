@@ -516,14 +516,36 @@ def _run_wf_method(
         preds   = cal_te if mae_cal < mae_raw else raw_te
         mae_f   = min(mae_raw, mae_cal)
 
-        # ROI
-        # Reconstrói df_te sem o TARGET para obter a linha dinâmica do df original
-        orig_te_idx = df_min.index[test_start:test_end]
-        df_te_orig  = df_min.loc[orig_te_idx]
-        lines  = _dynamic_line(df_te_orig, snap_min)
-        # Alinha indices com df_te_c
-        lines_aligned = lines[:len(y_te)]
-        roi_f, n_bets_f = _roi_from_preds(preds, y_te.values, lines_aligned)
+        # ROI probabilístico: Poisson P(over) + threshold selecionado no CAL
+        orig_te_idx  = df_min.index[test_start:test_end]
+        orig_ca_idx  = df_min.index[cal_start:cal_end]
+        df_te_orig   = df_min.loc[orig_te_idx]
+        df_ca_orig   = df_min.loc[orig_ca_idx]
+        lines_te     = _dynamic_line(df_te_orig, snap_min)[:len(y_te)]
+        lines_ca     = _dynamic_line(df_ca_orig, snap_min)[:len(y_ca)]
+
+        over_te_arr  = (y_te.values  > lines_te).astype(float)
+        over_ca_arr  = (y_ca.values  > lines_ca).astype(float)
+
+        # P(over) via Poisson
+        preds_ca_iso = iso.predict(raw_ca)
+        preds_ca_use = preds_ca_iso if mae_cal < mae_raw else raw_ca
+        fl_te = np.floor(lines_te).astype(int)
+        fl_ca = np.floor(lines_ca).astype(int)
+        p_ov_te = np.array([1.0 - sp_poisson.cdf(int(fl_te[i]),
+                             mu=max(float(preds[i]), 0.01))
+                             for i in range(len(preds))])
+        p_ov_ca = np.array([1.0 - sp_poisson.cdf(int(fl_ca[i]),
+                             mu=max(float(preds_ca_use[i]), 0.01))
+                             for i in range(len(preds_ca_use))])
+
+        if _HAS_ROI_UTILS:
+            roi_f, n_bets_f = select_thresh(
+                p_ov_ca, over_ca_arr, p_ov_te, over_te_arr)[:2]
+        else:
+            # Fallback edge-based
+            lines_aligned = lines_te
+            roi_f, n_bets_f = _roi_from_preds(preds, y_te.values, lines_aligned)
 
         fold_maes.append(mae_f)
         fold_rois.append(roi_f if not np.isnan(roi_f) else 0.0)
