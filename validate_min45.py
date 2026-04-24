@@ -197,7 +197,7 @@ def _wf_single_fold(
 
     feats = [c for c in feature_list if c in df_te.columns]
     if not feats:
-        return None, None, 0
+        return None, None, None, None, 0
 
     X_tr = _prepare_X(df_tr, feats, medians, global_mean)
     X_ca = _prepare_X(df_ca, feats, medians, global_mean)
