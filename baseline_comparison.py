@@ -112,6 +112,8 @@ def _r2(y, yhat):
 
 
 def _dline_vec(csf_arr, la_arr, rem):
+    if _HAS_ROI_UTILS:
+        return _dline_vec_shared(csf_arr, la_arr, rem)
     lines = []
     for csf, la in zip(csf_arr, la_arr):
         try:
@@ -129,31 +131,35 @@ def _p_over_poisson(line_arr, mu_arr):
                      for i in range(len(mu_arr))])
 
 
-def _roi_at_thresh(p_over, over_actual, thresh):
-    mask   = p_over >= thresh
-    n      = int(mask.sum())
-    if n == 0:
-        return float("nan"), 0
-    wins   = int(over_actual[mask].sum())
-    profit = wins * (ODDS - 1) - (n - wins)
-    return float(profit / n), n
-
-
 def _best_roi(p_over_cal, over_actual_cal, p_over_te, over_actual_te,
-              min_bets=30):
-    """Seleciona threshold no CAL e avalia no TEST."""
+              odds_over_arr=None, odds_under_arr=None):
+    """
+    Seleciona threshold no CAL (critério robusto: ROI>=15% + n>=200) e avalia no TEST.
+    Avalia Over E Under — escolhe o melhor lado.
+    """
+    if _HAS_ROI_UTILS:
+        roi_te, n_bets, thresh, side = select_thresh(
+            p_over_cal, over_actual_cal, p_over_te, over_actual_te,
+            odds_over_arr, odds_under_arr)
+        return roi_te, n_bets, thresh, side
+    # Fallback (sem _roi_utils): Over somente, max-ROI
     best_thresh, best_cal_roi = BREAKEVEN + MIN_EDGE, -999.0
     for thr in np.arange(BREAKEVEN + MIN_EDGE, 0.73, 0.01):
         mask = p_over_cal >= thr
         n    = int(mask.sum())
-        if n < min_bets:
+        if n < 30:
             continue
         wins = int(over_actual_cal[mask].sum())
         r    = (wins * (ODDS - 1) - (n - wins)) / n
         if r > best_cal_roi:
             best_cal_roi, best_thresh = r, thr
-    roi_te, n_bets = _roi_at_thresh(p_over_te, over_actual_te, best_thresh)
-    return roi_te, n_bets, best_thresh
+    mask_te = p_over_te >= best_thresh
+    n_te    = int(mask_te.sum())
+    if n_te == 0:
+        return float("nan"), 0, best_thresh, "Over"
+    wins_te = int(over_actual_te[mask_te].sum())
+    roi_te  = (wins_te * (ODDS - 1) - (n_te - wins_te)) / n_te
+    return roi_te, n_te, best_thresh, "Over"
 
 
 def _prepare_X(df, feature_list, medians, global_mean):
