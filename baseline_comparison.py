@@ -24,6 +24,14 @@ from scipy.stats import poisson as sp_poisson
 
 warnings.filterwarnings("ignore")
 
+# Importa utilitários de ROI compartilhados (mesma lógica do pipeline principal)
+try:
+    from _roi_utils import (dline_vec as _dline_vec_shared, select_thresh,
+                            profit_vec, ODDS_OVER, ODDS_UNDER, BREAKEVEN, MIN_EDGE)
+    _HAS_ROI_UTILS = True
+except ImportError:
+    _HAS_ROI_UTILS = False
+
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
