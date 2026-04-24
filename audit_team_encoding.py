@@ -373,20 +373,21 @@ def _dynamic_line(
     snap_min: int,
     fallback_rate: float = 11.0 / 90.0,
 ) -> np.ndarray:
-    """Linha dinâmica: corners_atual + tempo_restante × taxa."""
+    """Linha dinâmica arredondada para 0.5 mais próximo (igual ao pipeline principal)."""
     rem = 90 - snap_min
     csf = (df["corners_total_so_far"].values
            if "corners_total_so_far" in df.columns
            else np.zeros(len(df)))
     if "league_avg_corners" in df.columns:
+        la = df["league_avg_corners"].values
         rate = np.where(
-            df["league_avg_corners"].isna(),
+            np.isfinite(la) & (la > 0),
+            la / 90.0,
             fallback_rate,
-            df["league_avg_corners"].values / 90.0,
         )
     else:
         rate = np.full(len(df), fallback_rate)
-    return csf + rem * rate
+    return np.round((csf + rem * rate) * 2) / 2
 
 
 def _roi_from_preds(
