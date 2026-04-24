@@ -551,11 +551,18 @@ def analyse_time_windows(
     """Divide o TESTE em 3 janelas cronológicas e calcula ROI em cada."""
     df_tr, df_ca, df_te = _split_temporal(df_min)
 
-    p_ov, over_act, _ = _wf_single_fold(
+    p_ov, over_act, p_ov_cal, over_act_cal, _ = _wf_single_fold(
         df_tr, df_ca, df_te.copy(), snap_min,
         te_model, medians, feature_list, global_mean)
     if p_ov is None:
         return pd.DataFrame()
+
+    # Seleciona threshold e lado no CAL (antes de splitar por janela temporal)
+    if _HAS_ROI_UTILS and p_ov_cal is not None:
+        _, _nb, best_thr, best_side = select_thresh(
+            p_ov_cal, over_act_cal, p_ov, over_act)
+    else:
+        best_thr, best_side = 0.56, "Over"
 
     n_te   = len(p_ov)
     chunk  = n_te // 3
@@ -566,10 +573,13 @@ def analyse_time_windows(
         hi = (i + 1) * chunk if i < 2 else n_te
         p_w   = p_ov[lo:hi]
         ov_w  = over_act[lo:hi]
-        mask  = p_w >= 0.56
+        if best_side == "Over":
+            mask = p_w >= best_thr; act_w = ov_w
+        else:
+            mask = (1.0 - p_w) >= best_thr; act_w = 1 - ov_w
         n_bets = int(mask.sum())
         if n_bets > 0:
-            nw  = int(ov_w[mask].sum())
+            nw  = int(act_w[mask].sum())
             roi, ic_lo, ic_hi = _bootstrap_roi(n_bets, nw, n_bootstrap=500)
         else:
             roi = ic_lo = ic_hi = float("nan")
