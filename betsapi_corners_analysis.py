@@ -171,11 +171,11 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
         "second_half_corners_avg",
     ]
 
-    for _, row in df.iterrows():
-        home_id = str(row.get("home_id", ""))
-        away_id = str(row.get("away_id", ""))
-        event_id = row["event_id"]
-        current_dt = row.get("kickoff_dt_parsed")
+    for row in df.itertuples(index=False):
+        home_id = str(getattr(row, "home_id", ""))
+        away_id = str(getattr(row, "away_id", ""))
+        event_id = row.event_id
+        current_dt = getattr(row, "kickoff_dt_parsed", None)
 
         feat = {"event_id": event_id}
 
@@ -227,16 +227,16 @@ def build_team_history(df_pano: pd.DataFrame, window: int = ROLLING_WINDOW) -> p
         result_rows.append(feat)
 
         # Atualiza histórico: time da casa jogou em casa
-        game_stats = {col: row.get(col) for col in stat_cols}
-        game_stats["corners_ht_total"] = row.get("corners_ht_total")
+        game_stats = {col: getattr(row, col, None) for col in stat_cols}
+        game_stats["corners_ht_total"] = getattr(row, "corners_ht_total", None)
         game_stats["_is_home"] = True
         team_history.setdefault(home_id, []).append(game_stats)
 
         # Para o visitante, inverte TODOS os pares home/away e marca como away
         away_stats = dict(game_stats)
         for home_col, away_col in swap_pairs.items():
-            away_stats[home_col] = row.get(away_col)
-            away_stats[away_col] = row.get(home_col)
+            away_stats[home_col] = getattr(row, away_col, None)
+            away_stats[away_col] = getattr(row, home_col, None)
         away_stats["_is_home"] = False
         team_history.setdefault(away_id, []).append(away_stats)
 
