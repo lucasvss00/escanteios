@@ -416,11 +416,16 @@ def compare_neighbors(
             except Exception as e:
                 print(f"  [min{snap_min}] Erro ao carregar modelo: {e}")
 
-        # Walk-forward básico para ROI
+        # Walk-forward com threshold dinâmico selecionado no CAL
         wf_roi, wf_ic_lo, wf_n = float("nan"), float("nan"), 0
         if xgb_model is not None:
             fold_size = len(df_min) // N_WF_FOLDS
-            all_wins = 0; all_bets = 0; fold_rois = []
+            all_wins = 0; all_bets = 0
+            # Odds reais por jogo (quando disponíveis)
+            odds_ov_col  = (df_min["corners_over_odds"].values
+                            if "corners_over_odds"  in df_min.columns else None)
+            odds_un_col  = (df_min["corners_under_odds"].values
+                            if "corners_under_odds" in df_min.columns else None)
             for ti in range(2, N_WF_FOLDS):
                 cal_end  = ti * fold_size
                 te_start = ti * fold_size
@@ -429,15 +434,29 @@ def compare_neighbors(
                 dca = df_min.iloc[cal_end - fold_size:cal_end].copy()
                 dte = df_min.iloc[te_start:te_end].copy()
                 if len(dtr) < 80: continue
-                p_ov, ov_act, _ = _wf_single_fold(
+                p_ov, ov_act, p_ov_cal, ov_act_cal, _ = _wf_single_fold(
                     dtr, dca, dte, snap_min, te_model, medians, feature_list, global_mean)
                 if p_ov is None: continue
-                # Threshold fixo 0.56 para comparação justa
-                m = p_ov >= 0.56; nb = int(m.sum())
-                if nb > 0:
-                    nw = int(ov_act[m].sum())
-                    all_wins += nw; all_bets += nb
-                    fold_rois.append((nw*(ODDS-1)-(nb-nw))/nb)
+                # Odds reais para este fold
+                _ov_idx  = slice(te_start, te_end)
+                _oo = odds_ov_col[_ov_idx] if odds_ov_col is not None else None
+                _ou = odds_un_col[_ov_idx] if odds_un_col is not None else None
+                if _HAS_ROI_UTILS:
+                    _roi_f, _nb, _thr, _side = select_thresh(
+                        p_ov_cal, ov_act_cal, p_ov, ov_act, _oo, _ou)
+                else:
+                    # Fallback simples
+                    m = p_ov >= 0.56; _nb = int(m.sum())
+                    if _nb > 0:
+                        _nw = int(ov_act[m].sum())
+                        _roi_f = (_nw * (ODDS - 1) - (_nb - _nw)) / _nb
+                    else:
+                        _nb = 0; _roi_f = 0.0
+                if _nb > 0:
+                    # Reconstrói wins a partir do ROI para somar ao total
+                    all_bets += _nb
+                    # ROI ponderado: usamos lucro / n para não misturar odds diferentes
+                    all_wins += int(round(_nb * (_roi_f + 1) / ODDS))
             if all_bets > 0:
                 wf_roi, wf_ic_lo, _ = _bootstrap_roi(all_bets, all_wins)
                 wf_n = all_bets
