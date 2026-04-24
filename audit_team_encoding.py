@@ -29,8 +29,18 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
+from scipy.stats import poisson as sp_poisson
 
 warnings.filterwarnings("ignore")
+
+# Importa utilitários de ROI compartilhados (mesma lógica do pipeline principal)
+try:
+    from _roi_utils import (select_thresh, dline_vec as _dline_shared,
+                            ODDS_OVER, BREAKEVEN, MIN_EDGE)
+    ODDS = ODDS_OVER
+    _HAS_ROI_UTILS = True
+except ImportError:
+    _HAS_ROI_UTILS = False
 
 # ---------------------------------------------------------------------------
 # CONFIG
