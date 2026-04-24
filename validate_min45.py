@@ -290,12 +290,12 @@ def run_threshold_sensitivity(
         df_ca = df_min.iloc[cal_end - fold_size:cal_end].copy()
         df_te = df_min.iloc[test_start:test_end].copy()
 
-        p_over, over_actual, n_te = _wf_single_fold(
+        p_over, over_actual, p_over_cal, over_actual_cal, n_te = _wf_single_fold(
             df_tr, df_ca, df_te, snap_min,
             te_model, medians, feature_list, global_mean)
         if p_over is None or n_te < 5:
             continue
-        fold_results.append((p_over, over_actual))
+        fold_results.append((p_over, over_actual, p_over_cal, over_actual_cal))
 
     if not fold_results:
         return pd.DataFrame()
