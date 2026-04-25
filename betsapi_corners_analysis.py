@@ -49,6 +49,9 @@ class _TeeWriter:
 
 DATA_DIR.mkdir(exist_ok=True)
 _LOG_PATH = DATA_DIR / f"log_analysis_{_dt.datetime.now():%Y%m%d_%H%M%S}.txt"
+# Garante UTF-8 no terminal Windows (evita UnicodeEncodeError com ✓, →, etc.)
+if hasattr(_sys.stdout, "reconfigure"):
+    _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 _tee = _TeeWriter(_sys.stdout, _LOG_PATH)
 _sys.stdout = _tee
 
