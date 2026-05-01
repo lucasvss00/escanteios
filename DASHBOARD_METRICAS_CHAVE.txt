@@ -1,0 +1,237 @@
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                      DASHBOARD: MÉTRICAS-CHAVE DO MODELO                    ┃
+┃              Previsão de Escanteios - Análise de Viabilidade              ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+═══════════════════════════════════════════════════════════════════════════════
+1. PERFORMANCE POR MINUTO (OVERVIEW)
+═══════════════════════════════════════════════════════════════════════════════
+
+Minuto │ Volume  │ Acurácia │ ROI    │ Sharpe  │ Pior Fold │ Risco    │ Status
+───────┼─────────┼──────────┼────────┼─────────┼───────────┼──────────┼─────────
+  15   │ 2.132   │  60.4%   │ 10.5%  │  0.78   │   -3.9%   │ ALTO     │ ❌ SKIP
+  30   │ 16.804  │  62.7%   │ 14.8%  │  9.87   │  +12.9%   │ MÍNIMO   │ ✅ CORE
+  45   │ 3.660   │  62.6%   │ 14.6%  │  1.20   │   +7.4%   │ MÉDIO    │ ⚠️ HEDGE
+  60   │ 15.084  │  64.1%   │ 17.4%  │  1.43   │  -12.2%   │ CRÍTICO  │ 🚨 MON
+  75   │ 4.630   │  61.9%   │ 13.2%  │  2.24   │  +10.0%   │ MÉDIO    │ ✅ COMP
+
+═══════════════════════════════════════════════════════════════════════════════
+2. ALOCAÇÃO RECOMENDADA vs. ATUAL
+═══════════════════════════════════════════════════════════════════════════════
+
+CENÁRIO RECOMENDADO (Banca: 100 unidades)
+
+Minuto │ % Alocação │ Banca    │ Aposta Média │ ROI        │ Lucro    │ Risco
+───────┼────────────┼──────────┼──────────────┼────────────┼──────────┼──────────
+  15   │    2%      │   2.0    │     2.27%    │   10.5%    │   0.21   │ Skip
+  30   │   50%      │  50.0    │     2.83%    │   14.8%    │   7.40   │ Nenhum
+  45   │   15%      │  15.0    │     2.82%    │   14.6%    │   2.19   │  -10%
+  60   │   30%      │  30.0    │     2.75%    │   17.4%    │   5.22   │  -15%
+  75   │    3%      │   3.0    │     1.43%    │   13.2%    │   0.40   │  Skip
+───────┴────────────┴──────────┴──────────────┴────────────┴──────────┴──────────
+TOTAL  │   100%     │ 100.0    │              │            │  15.42   │
+
+ANÁLISE:
+  ✅ Min 30 concentra 50% (seguro, Sharpe 9.87)
+  ⚠️  Min 60 concentra 30% (volatilidade monitorada)
+  ✅ Min 45 como hedge 15% (proteção contra intervalo)
+  ✅ Min 15, 75 mínimos (dados escassos)
+
+═══════════════════════════════════════════════════════════════════════════════
+3. INDICADORES DE SAÚDE DO MODELO
+═══════════════════════════════════════════════════════════════════════════════
+
+Indicador                          │ Valor       │ Benchmark │ Status
+───────────────────────────────────┼─────────────┼───────────┼──────────
+ROI Esperado (Cenário Recomendado) │  +15.42%    │  >+12%    │ ✅ OK
+Sharpe-like Ratio                  │   3.21      │  >1.0     │ ✅ OK
+Drawdown Máximo Esperado           │  -15%       │  <-20%    │ ✅ OK
+Folds com ROI Negativo             │   2/35      │  <20%     │ ✅ OK
+Volume Concentrado (Min 30+60)     │  90.8%      │  <80%     │ 🚨 ALTO
+Dados Min 30/60                    │  31,888     │  >10k     │ ✅ OK
+Dados Min 15/45/75                 │  10,422     │  >5k      │ ⚠️ LOW
+Odds Esperadas                     │   1.90x     │  >1.88x   │ ✅ OK (monitore)
+Amplitude Min 60                   │  33.0%      │  <20%     │ 🚨 ALTO
+
+═══════════════════════════════════════════════════════════════════════════════
+4. MATRIZ DE RISCO
+═══════════════════════════════════════════════════════════════════════════════
+
+                IMPACTO
+                   ↑
+                   │
+          Crítico  │  Min 60      Min 30/60
+                   │  (Volatilidade) (Concentração)
+          Alto     │  Min 45      Odds
+                   │  (Amplitude)  (Degradação)
+          Médio    │
+                   │              Dados Min 15/45/75
+          Baixo    │              (Insuficientes)
+                   └────────────────────────────────────→
+                     Improvável    Possível    Provável
+                               PROBABILIDADE
+
+Quadrante Crítico-Provável:
+  🚨 Concentração em Min 30+60 (90.8%) → Single point of failure
+  🚨 Volatilidade Min 60 (-12.2%) → Drawdown em produção
+
+Quadrante Crítico-Possível:
+  ⚠️ Degradação de odds (real vs. esperado 1.90x)
+  ⚠️ Amplitude Min 45 (intervalo é transição)
+
+Quadrante Médio-Possível:
+  ⚠️ Dados escassos (Min 15/45/75)
+
+═══════════════════════════════════════════════════════════════════════════════
+5. CHECKLIST PRÉ-OPERACIONALIZAÇÃO
+═══════════════════════════════════════════════════════════════════════════════
+
+ITEM                                    │ STATUS    │ PRIORIDADE │ NOTA
+────────────────────────────────────────┼───────────┼────────────┼──────────
+✓ Sharpe-like Ratio > 1.0              │ ✅ PASS   │ CRÍTICA    │ 3.21
+✓ ROI Esperado > +12%                  │ ✅ PASS   │ CRÍTICA    │ 15.42%
+✓ Dados Min 30/60 > 10k apostas        │ ✅ PASS   │ CRÍTICA    │ 31.8k
+✓ Alocação Max Min 30+60 < 80%         │ ❌ FAIL   │ CRÍTICA    │ 80% (MUDAR)
+✓ Volatilidade Min 60 < 20%            │ ❌ FAIL   │ CRÍTICA    │ 33% (MONITORAR)
+✓ Dados Min 15/45/75 > 5k              │ ⚠️ WARNING│ ALTA       │ 10.4k (OK)
+✓ Kelly Criterion > 2%                 │ ✅ PASS   │ ALTA       │ 2.27-3.49%
+✓ Folds Negativos < 30%                │ ✅ PASS   │ ALTA       │ 5.7%
+✓ Odds Fixas Sensibilidade Testada     │ ⚠️ TODO   │ ALTA       │ Testar 1.80-1.95
+✓ Stop-Loss Definido                   │ ⚠️ TODO   │ ALTA       │ -15% Min 60
+✓ Plan de Reestimação                  │ ⚠️ TODO   │ ALTA       │ A cada 100 apostas
+✓ Estratificação por Liga              │ ⚠️ TODO   │ MÉDIA      │ Validar padrões
+✓ TimeSeriesSplit Implementado         │ ⚠️ TODO   │ MÉDIA      │ Ordem temporal
+
+BLOQUEADORES:
+  ❌ Alocação Min 30+60 em 80% (deve ser <60%)
+  ❌ Volatilidade Min 60 em 33% (deve ser <20%)
+
+AÇÕES IMEDIATAS:
+  1. Reduzir Min 60 de 30% para 20% (liberar 10% para Min 45)
+  2. Implementar Stop-Loss -15% em Min 60
+  3. Testar sensibilidade de odds (1.80, 1.85, 1.90, 1.95)
+  4. Validar correlação de erros Min 30 vs Min 60
+
+═══════════════════════════════════════════════════════════════════════════════
+6. COMPARATIVO: ESPERADO vs. PRODUÇÃO
+═══════════════════════════════════════════════════════════════════════════════
+
+MÉTRICA                     │ ESPERADO  │ PRODUÇÃO  │ DEGRADAÇÃO │ ACTION
+─────────────────────────── ┼───────────┼───────────┼────────────┼──────────
+Odds (Bet365/Pinnacle)      │   1.90x   │   ?       │    TBD     │ Monitor
+Acurácia (Min 30)           │  62.7%    │   ?       │    TBD     │ Track
+ROI (Min 30)                │  14.8%    │   ?       │    TBD     │ Monitor
+Drawdown Máximo             │  -12.2%   │  -15%~20% │   -3~8pp   │ Stop-Loss
+Sharpe-like Ratio           │   3.21    │   ?       │    TBD     │ Weekly Check
+Win Rate                    │  62.7%    │   ?       │    TBD     │ Monitor
+
+CENÁRIOS DE DEGRADAÇÃO:
+
+Cenário A (Otimista):
+  Odds reais = 1.90x (como esperado)
+  Degradação: 0%
+  ROI esperado: 15.42%
+
+Cenário B (Base):
+  Odds reais = 1.88x (-0.2 de degradação)
+  Acurácia mesmo (62.7%)
+  Degradação: -1.5%
+  ROI esperado: 14.2%
+
+Cenário C (Pessimista):
+  Odds reais = 1.85x (-0.5 de degradação)
+  Acurácia caí 2% (60.7%)
+  Degradação: -5%
+  ROI esperado: 12.0%
+
+Cenário D (Crítico):
+  Odds reais = 1.85x
+  Acurácia cai 5% (57.7%)
+  Fold-like Min 60 (-12.2%)
+  Degradação: -20%
+  ROI esperado: 8.0% (ainda viável, ativa stop-loss)
+
+RECOMENDAÇÃO:
+  • Preço mínimo aceitável de odds: 1.88x (Scenario B)
+  • Skip aposta se odds < 1.88x
+  • Se ROI mensal cair abaixo 10%, investigar degradação
+
+═══════════════════════════════════════════════════════════════════════════════
+7. ROADMAP DE OPERACIONALIZAÇÃO
+═══════════════════════════════════════════════════════════════════════════════
+
+FASE 1: MICRO-BANCA (Semanas 1-2)
+┌─────────────────────────────────────────────────────────────────┐
+│ Banca: 1.000 unidades                                           │
+│ Alocação: 50% Min 30, 30% Min 60, 15% Min 45, 5% Min 75/15   │
+│ Critério GO: Lucro > +150 após 300 apostas ✅                  │
+│ Critério NO-GO: Lucro < +100 ou Drawdown > -15% ❌            │
+│ Monitoramento: Diário (equity curve, odds reais)              │
+└─────────────────────────────────────────────────────────────────┘
+
+FASE 2: ESCALAÇÃO (Semanas 3-4)
+┌─────────────────────────────────────────────────────────────────┐
+│ Banca: 10.000 unidades (se Fase 1 passou ✅)                  │
+│ Mesma alocação                                                   │
+│ Stop-Loss: -5% diário, -15% Min 60                             │
+│ Critério: ROI > +12% mensal ✅                                  │
+└─────────────────────────────────────────────────────────────────┘
+
+FASE 3: OPERAÇÃO CONTÍNUA (Mês 2+)
+┌─────────────────────────────────────────────────────────────────┐
+│ Banca: Dinâmica (compounding)                                   │
+│ Reestimação: A cada 100 apostas                                │
+│ Estratificação: Por liga/competição                             │
+│ Monitoramento: Semanal (degradação?)                            │
+└─────────────────────────────────────────────────────────────────┘
+
+TIMELINE ESPERADA:
+  Semana 1-2:  Fase 1 (GO/NO-GO)
+  Semana 3-4:  Fase 2 (escalação)
+  Mês 2:       Estabilidade esperada
+  Mês 3-4:     Otimização
+  Mês 5+:      Operação sustentável
+
+═══════════════════════════════════════════════════════════════════════════════
+8. INDICADORES DE ALERTA (REAL-TIME)
+═══════════════════════════════════════════════════════════════════════════════
+
+RED FLAG                           │ THRESHOLD │ AÇÃO
+───────────────────────────────────┼───────────┼──────────────────────
+Drawdown diário > -5%             │ -5.0%     │ Parar, investigar
+Drawdown Min 60 > -15%            │ -15.0%    │ Parar, reestimar
+Odds média < 1.88x                │ < 1.88x   │ Skip apostas
+ROI mensal < +10%                 │ < 10%     │ Revisar modelo
+Amplitude novo fold > 20%         │ > 20%     │ Investigar
+Correlação Min 30 vs 60 > 0.3     │ > 0.3     │ Mudar alocação
+Acurácia Min 30 < 60%             │ < 60%     │ Reestimar
+Dados coletados < 100 apostas     │ < 100     │ Manter micro-banca
+
+═══════════════════════════════════════════════════════════════════════════════
+9. RECOMENDAÇÃO FINAL
+═══════════════════════════════════════════════════════════════════════════════
+
+VIABILIDADE:      ✅ SIM, COM MITIGAÇÕES
+RISCO:            ⚠️ MÉDIO (gerenciável)
+ROI ESPERADO:     +15.42% (1º mês)
+PAYOFF ESPERADO:  +6 meses até estabilidade
+
+AÇÕES PRÉ-LAUNCH (IMEDIATAS):
+  □ Reduzir Min 60 de 30% para 20%
+  □ Aumentar Min 45 de 15% para 25% (hedge)
+  □ Implementar stop-loss -15% em Min 60
+  □ Testar sensibilidade de odds
+  □ Validar dados Min 15/45/75 (coletar mais se necessário)
+
+GO/NO-GO:
+  ✅ GO se passar em Fase 1 (Micro-banca)
+  ❌ NO-GO se Drawdown > -15% ou ROI < +10%
+
+CONTATO PARA DÚVIDAS:
+  Análise realizada: 2026-05-01
+  Modelo: XGBoost (Walk-Forward Validation, 5-folds)
+  Dados: Histórico de escanteios - BetsAPI
+
+═══════════════════════════════════════════════════════════════════════════════
+FIM DO DASHBOARD
+═══════════════════════════════════════════════════════════════════════════════
