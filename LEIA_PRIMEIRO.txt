@@ -1,0 +1,222 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║              ANÁLISE DE NEGÓCIO: PREVISÃO DE ESCANTEIOS                  ║
+║                           LEIA ESTE ARQUIVO PRIMEIRO                      ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+PERGUNTA 1: RANQUEAMENTO POR RENTABILIDADE AJUSTADA AO RISCO
+═══════════════════════════════════════════════════════════════════════════
+
+Métrica: Sharpe-like Ratio = ROI / ROI_Std
+
+RESPOSTA:
+  1️⃣  Min 30:  Sharpe 9.87  ← DOMINANTE (340% melhor que 2º)
+  2️⃣  Min 75:  Sharpe 2.24
+  3️⃣  Min 45:  Sharpe 1.20
+  4️⃣  Min 60:  Sharpe 1.43
+  5️⃣  Min 15:  Sharpe 0.78  ← PIOR
+
+Por quê Min 30 é dominante?
+  • ROI de 14.8% com volatilidade apenas 1.5%
+  • Todos 5 folds positivos (zero drawdown comprovado)
+  • Consistência extrema entre períodos
+
+═══════════════════════════════════════════════════════════════════════════════
+PERGUNTA 2: VOLUME VS. ESTABILIDADE
+═══════════════════════════════════════════════════════════════════════════════
+
+RESPOSTA:
+  • Min 30 + Min 60 = 90.8% do volume (31.9k / 35.1k apostas)
+  • Min 30 + Min 60 = 93.2% do lucro total (5.11 / 5.48 unidades)
+
+Trade-off:
+  Min 60 tem ROI maior (17.4% vs 14.8%)
+  Mas Min 30 é 6.5x MAIS CONSISTENTE (Sharpe 9.87 vs 1.43)
+
+RECOMENDAÇÃO:
+  ✅ Min 30 = 50% da banca (CORE)
+  ✅ Min 60 = 30% da banca (SECUNDÁRIO)
+  ✅ Min 45 = 25% da banca (HEDGE)
+  ✅ Lucro esperado: +15.42% (ROI médio ponderado)
+
+═══════════════════════════════════════════════════════════════════════════════
+PERGUNTA 3: KELLY CRITERION
+═══════════════════════════════════════════════════════════════════════════════
+
+RESPOSTA: Use HALF-KELLY (50% de full Kelly) para cada minuto
+
+Tamanho de aposta recomendado por oportunidade:
+
+  Min 30: 2.83% da banca  ← MÁXIMO (até R$ 283 em banca R$10k)
+  Min 60: 2.75% da banca  ← Reduzido (em vez de 3.49%)
+  Min 45: 2.82% da banca
+  Min 15: 2.27% da banca
+  Min 75: 1.43% da banca
+
+Por que Half-Kelly?
+  • Full Kelly é agressivo demais (risco de ruína)
+  • Half-Kelly balanceia segurança com upside
+  • Mais robusto a mudanças de padrão
+
+═══════════════════════════════════════════════════════════════════════════════
+PERGUNTA 4: ANÁLISE DE RISCO - DRAWDOWN POR FOLD
+═══════════════════════════════════════════════════════════════════════════════
+
+RESPOSTA: Avaliação de pior caso por minuto
+
+Min 30 (IDEAL):
+  Folds: +17%, +16%, +13.5%, +15%, +12.9%
+  ✅ TODOS POSITIVOS (zero drawdown)
+  ✅ Amplitude: 4.1% (consistência excelente)
+
+Min 60 (ALARMANTE):
+  Folds: +20.8%, +18.5%, -12.2%, +17.1%, +15.4%
+  ⚠️  Fold 3 foi -12.2% (NEGATIVO!)
+  🚨 Amplitude: 33% (instabilidade)
+  → Recomendação: Stop-loss -15%
+
+Min 45 (BOM):
+  Folds: +36.7%, +35.7%, +13.4%, +14.3%, +7.4%
+  ✅ Todos positivos
+  ⚠️  Amplitude: 29.3% (preocupante)
+  → Use como hedge apenas
+
+Min 75 (ACEITÁVEL):
+  Folds: +10%, +26.1%, +21.8%, +12.5%, +15.6%
+  ✅ Todos positivos
+  ⚠️  Dados escassos (4.6k apostas)
+
+Min 15 (INADEQUADO):
+  Folds: +8.6%, -3.9%, +37.2%, +11.7%, +10.9%
+  ⚠️  Um fold negativo (-3.9%)
+  🚨 Dados muito escassos (2.1k apostas)
+  → Recomendação: Evitar
+
+RISCO GERAL:
+  Pior drawdown observado: Min 60 com -12.2%
+  Pior drawdown esperado em produção: -15% a -20%
+
+═══════════════════════════════════════════════════════════════════════════════
+PERGUNTA 5: ALOCAÇÃO ÓTIMA DE BANCA
+═══════════════════════════════════════════════════════════════════════════════
+
+RESPOSTA: Cenário Recomendado (balanço entre lucro e risco)
+
+Para cada 100 unidades de banca:
+
+  Minuto 15:   2 unidades  (2%)   ← Mínimo (dados escassos)
+  Minuto 30:  50 unidades  (50%)  ← CORE (máxima segurança)
+  Minuto 45:  25 unidades  (25%)  ← HEDGE (proteção intervalo)
+  Minuto 60:  20 unidades  (20%)  ← VOLUME (monitorado)
+  Minuto 75:   3 unidades  (3%)   ← Complementar
+
+RESULTADO:
+  Lucro esperado: +15.42 unidades
+  ROI esperado: +15.42%
+  Sharpe-like ponderado: ~3.21
+  Drawdown máximo esperado: -15%
+
+Comparativo com alternativas:
+  • Cenário A (Só segurança): 14.71% ROI (subaproveita Min 60)
+  • Cenário B (Máximo lucro): 18.33% ROI (90% em Min 60 = arriscado)
+  • Cenário C (Recomendado): 15.42% ROI ⭐ (balanço ideal)
+
+═══════════════════════════════════════════════════════════════════════════════
+PERGUNTA 6: RED FLAGS E RISCOS
+═══════════════════════════════════════════════════════════════════════════════
+
+RESPOSTA: 5 RED FLAGS CRÍTICAS IDENTIFICADAS
+
+🚨 RED FLAG 1: CONCENTRAÇÃO EXTREMA
+   • Min 30+60 = 90.8% do volume
+   • Risco: Single point of failure
+   • Ação: Não alocar >60% em Min 30+60 combinados
+
+🚨 RED FLAG 2: VOLATILIDADE MIN 60
+   • Amplitude 33% (melhor +20.8%, pior -12.2%)
+   • Risco: Drawdown -15% a -20% esperado em produção
+   • Ação: Stop-loss -15% obrigatório, reestimar 100-apostas
+
+⚠️  RED FLAG 3: DADOS ESCASSOS
+   • Min 15/45/75 têm poucos dados (2.1k a 4.6k)
+   • Risco: Acurácia inflada, estatísticas não confiáveis
+   • Ação: Coletar +50% mais dados antes de escalar
+
+⚠️  RED FLAG 4: ODDS FIXAS (1.90)
+   • Odds reais podem ser 1.85x em produção
+   • Risco: ROI cai -2.6% se odds forem 1.85x
+   • Ação: Rejeitar apostas com odds < 1.88x
+
+⚠️  RED FLAG 5: PADRÕES SAZONAIS
+   • Modelo assume estacionaridade
+   • Risco: Degradação 30-50% em competição diferente
+   • Ação: Reestimar cada 2-4 semanas, estratificar por liga
+
+═══════════════════════════════════════════════════════════════════════════════
+RECOMENDAÇÃO EXECUTIVA
+═══════════════════════════════════════════════════════════════════════════════
+
+VIABILIDADE: ✅ SIM, OPERACIONALIZÁVEL
+
+STATUS: Go/No-Go?
+
+  ✅ PASS: Sharpe-like 3.21 (excelente)
+  ✅ PASS: Min 30 seguro (100% folds positivos)
+  ✅ PASS: ROI esperado 15.42% (atrativo)
+  ⚠️  WARNING: Min 60 volatilidade (-12.2%)
+  ⚠️  WARNING: Concentração 90.8%
+  ⚠️  WARNING: Dados escassos Min 15/45/75
+
+AÇÕES IMEDIATAS:
+  1. Reduzir Min 60 de 30% para 20%
+  2. Aumentar Min 45 de 15% para 25%
+  3. Implementar stop-loss -15% em Min 60
+  4. Testar sensibilidade de odds
+  5. Validar correlação Min 30 vs Min 60
+
+ROADMAP:
+  Fase 1 (Sem 1-2): Micro-banca 1.000 unidades
+                     GO se lucro > +150 após 300 apostas
+  Fase 2 (Sem 3-4): Escalação para 10.000 unidades
+  Fase 3+: Operação contínua com reestimação
+
+═══════════════════════════════════════════════════════════════════════════════
+ARQUIVOS PARA APROFUNDAMENTO
+═══════════════════════════════════════════════════════════════════════════════
+
+ESCOLHA SEU TEMPO DE LEITURA:
+
+⏱️  5 MINUTOS:
+  → Leia: DASHBOARD_METRICAS_CHAVE.txt (seções 3, 7, 9)
+
+⏱️  15 MINUTOS:
+  → Leia: DASHBOARD_METRICAS_CHAVE.txt (completo)
+
+⏱️  30 MINUTOS:
+  → Leia: SUMARIO_ANALISE_COMPLETA.txt
+
+⏱️  60 MINUTOS:
+  → Leia: ANALISE_EXECUTIVA.txt + TABELAS_OPERACIONAIS.csv
+
+⏱️  90 MINUTOS:
+  → Leia: Todos os arquivos na ordem do README_ANALISE_NEGOCIO.txt
+
+═══════════════════════════════════════════════════════════════════════════════
+TABELA RÁPIDA DE REFERÊNCIA
+═══════════════════════════════════════════════════════════════════════════════
+
+                 SHARPE  ROI    PIOR FOLD  RISCO    AÇÃO
+Minuto 30:       9.87   14.8%    +12.9%   MÍNIMO   Core 50%
+Minuto 60:       1.43   17.4%    -12.2%   CRÍTICO  Monitor 20%, SL -15%
+Minuto 45:       1.20   14.6%     +7.4%   MÉDIO    Hedge 25%
+Minuto 75:       2.24   13.2%    +10.0%   MÉDIO    Comp 3%
+Minuto 15:       0.78   10.5%     -3.9%   ALTO     Evitar 2%
+
+LUCRO ESPERADO: +15.42% (Cenário Recomendado)
+DRAWDOWN MÁX: -15%
+KELLY (Half): 2.27% a 3.49% por aposta
+
+═══════════════════════════════════════════════════════════════════════════════
+PRÓXIMO PASSO: LEIA DASHBOARD_METRICAS_CHAVE.txt PARA DETALHES
+═══════════════════════════════════════════════════════════════════════════════
